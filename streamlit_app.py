@@ -157,7 +157,16 @@ if page == "Heroes":
 
         # Format numeric columns as integers (no decimals)
         pretty_numeric = [PRETTY_COLUMNS_MAP[c] for c in NUMERIC_NON_STAR if PRETTY_COLUMNS_MAP.get(c) in disp.columns]
-        fmt_map = {col: "{:,.0f}" for col in pretty_numeric}
+
+        def safe_int_format(x):
+            try:
+                if pd.isna(x) or x == "":
+                    return ""
+                return f"{int(float(x)):,}"
+            except Exception:
+                return x
+
+        fmt_map = {col: safe_int_format for col in pretty_numeric}
 
         styled = (
             disp.style
@@ -165,6 +174,7 @@ if page == "Heroes":
             .format(formatter=fmt_map, na_rep="")
             .hide(axis="index")
         )
+
 
         st.write(styled, unsafe_allow_html=True)
 
