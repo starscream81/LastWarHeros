@@ -263,7 +263,7 @@ elif page == "Add / Update Hero":
                 st.error(f"Failed to save: {e}")
 
 # -------------------------------
-# DASHBOARD (data-connected, with image; index hidden; compact widths)
+# DASHBOARD (data-connected, compact header + table under team header)
 # -------------------------------
 else:
     heroes = load_heroes()
@@ -271,7 +271,6 @@ else:
     # Header area with image and title
     img_col, hdr_col = st.columns([1, 5])
     with img_col:
-        # Use your frog image; adjust width if you want larger/smaller
         st.image("frog.png", use_column_width=False, width=320)
 
     with hdr_col:
@@ -282,10 +281,10 @@ else:
         with lvlcol:
             base_level = st.number_input("Base Level", min_value=0, max_value=99, step=1, format="%d", key="base_level")
 
-        # Total Hero Power shown directly under the title (still in header area)
+        # Total Hero Power directly under title, constrained to a narrow column
         total_power = pd.to_numeric(heroes.get("power"), errors="coerce").fillna(0).sum() if not heroes.empty else 0
-        p1, p2 = st.columns([4, 2])
-        with p1:
+        _spacer, powcol = st.columns([4, 2])  # small column keeps input compact
+        with powcol:
             st.text_input("Total Hero Power", value=f"{int(total_power):,}", disabled=True, key="total_power")
 
     if heroes.empty:
@@ -295,8 +294,8 @@ else:
     def render_team_section(team_num: int):
         st.markdown("---")
 
-        # Header line: Team X | Type | Power | then the 5-row list to the right
-        head, typecol, pcol, listcol = st.columns([1.3, 1.0, 1.0, 6.7])
+        # Header line: Team X on left, Type and Power to the right (same line)
+        head, typecol, pcol = st.columns([2, 1, 1])
 
         with head:
             st.markdown(f"### Team {team_num}")
@@ -304,7 +303,7 @@ else:
         with typecol:
             st.selectbox("Type", ["Tank","Air","Missile","Mixed"], key=f"team_type_{team_num}")
 
-        # Filter team heroes and compute power
+        # Filter team heroes and compute team power
         team_df = heroes[heroes.get("team") == str(team_num)].copy()
         team_df["power"] = pd.to_numeric(team_df.get("power"), errors="coerce").fillna(0)
         team_df["level"] = pd.to_numeric(team_df.get("level"), errors="coerce").fillna(0)
@@ -314,39 +313,37 @@ else:
         with pcol:
             st.text_input("Power", value=f"{team_power_sum:,}", disabled=True, key=f"team_power_{team_num}")
 
-        # Build top 5 table (Name, Level, Power) and pad with blanks to 5 rows
+        # Table UNDER the header line (full width), compact columns, hidden index
         top5 = team_df[["name","level","power"]].head(5).copy()
         while len(top5) < 5:
             top5 = pd.concat([top5, pd.DataFrame([{"name":"","level":"","power":""}])], ignore_index=True)
 
-        with listcol:
-            # Hide index and make columns compact
-            tdisp = top5.rename(columns={"name": "Name", "level": "Level", "power": "Power"}).reset_index(drop=True)
+        tdisp = top5.rename(columns={"name": "Name", "level": "Level", "power": "Power"}).reset_index(drop=True)
 
-            def fmt_int(x):
-                try:
-                    if x == "" or pd.isna(x):
-                        return ""
-                    return f"{int(float(x)):,}"
-                except Exception:
-                    return x
+        def fmt_int(x):
+            try:
+                if x == "" or pd.isna(x):
+                    return ""
+                return f"{int(float(x)):,}"
+            except Exception:
+                return x
 
-            tstyled = (
-                tdisp.style
-                .format({"Level": fmt_int, "Power": fmt_int})
-                .hide(axis="index")
-                .set_table_styles([
-                    # center headers and cells, give compact widths
-                    {"selector": "th", "props": [("text-align", "center"), ("width", "80px"), ("padding", "4px 6px")]},
-                    {"selector": "td", "props": [("text-align", "center"), ("width", "80px"), ("padding", "4px 6px")]},
-                ])
-            )
-            # Name column narrower, left-aligned
-            tstyled = tstyled.set_properties(subset=["Name"], **{"text-align": "left", "width": "140px"})
+        tstyled = (
+            tdisp.style
+            .format({"Level": fmt_int, "Power": fmt_int})
+            .hide(axis="index")
+            .set_table_styles([
+                {"selector": "th", "props": [("text-align", "center"), ("width", "80px"), ("padding", "4px 6px")]},
+                {"selector": "td", "props": [("text-align", "center"), ("width", "80px"), ("padding", "4px 6px")]},
+            ])
+        )
+        # Name column left and ~140px
+        tstyled = tstyled.set_properties(subset=["Name"], **{"text-align": "left", "width": "140px"})
 
-            st.write(tstyled, unsafe_allow_html=True)
+        st.write(tstyled, unsafe_allow_html=True)
 
     render_team_section(1)
     render_team_section(2)
     render_team_section(3)
     render_team_section(4)
+
