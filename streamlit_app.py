@@ -5,9 +5,6 @@ from supabase import create_client, Client
 
 st.set_page_config(page_title="Last War Heroes", page_icon="🎮", layout="wide")
 
-# -------------------------------------------------
-# Supabase connection
-# -------------------------------------------------
 @st.cache_resource
 def get_supabase() -> Client:
     return create_client(st.secrets["supabase_url"], st.secrets["supabase_key"])
@@ -21,6 +18,7 @@ STAR_CHOICES = [
     "2.0","2.1","2.2","2.3","2.4",
     "3.0","3.1","3.2","3.3","3.4",
     "4.0","4.1","4.2","4.3","4.4",
+    "5.0"
 ]
 
 NUMERIC_FIELDS = [
@@ -35,9 +33,6 @@ DISPLAY_COLUMNS = [
     "weapon","weapon_level","max_skill_level","skill1","skill2","skill3",
 ]
 
-# -------------------------------------------------
-# Utility functions
-# -------------------------------------------------
 def load_catalog() -> pd.DataFrame:
     data = sb.table("hero_catalog").select("name,type,role").order("name").execute().data
     return pd.DataFrame(data)
@@ -59,14 +54,8 @@ def upsert_hero_by_name(name: str, fields: Dict[str, Any]):
     else:
         sb.table("heroes").insert({"name": name, **fields}).execute()
 
-# -------------------------------------------------
-# Page navigation
-# -------------------------------------------------
 page = st.sidebar.radio("Navigate", ["Heroes", "Add / Update Hero", "Dashboard (later)"])
 
-# -------------------------------------------------
-# HEROES PAGE
-# -------------------------------------------------
 if page == "Heroes":
     st.title("🧙 Heroes")
 
@@ -95,9 +84,6 @@ if page == "Heroes":
     else:
         st.info("No heroes yet. Add one in 'Add / Update Hero'.")
 
-# -------------------------------------------------
-# ADD / UPDATE HERO PAGE
-# -------------------------------------------------
 elif page == "Add / Update Hero":
     st.title("➕ Add / Update Hero")
 
@@ -109,7 +95,6 @@ elif page == "Add / Update Hero":
         name = st.selectbox("Name", names)
         row = catalog[catalog["name"] == name].iloc[0]
         st.caption(f"Type: **{row['type']}**  |  Role: **{row['role']}**")
-        st.write("Choose only the fields you want to update. Leave others blank.")
 
         with st.form("hero_form"):
             c1, c2 = st.columns(2)
@@ -160,10 +145,6 @@ elif page == "Add / Update Hero":
                 st.cache_data.clear()
             except Exception as e:
                 st.error(f"Error saving hero: {e}")
-
-# -------------------------------------------------
-# DASHBOARD PLACEHOLDER
-# -------------------------------------------------
 else:
     st.title("📊 Dashboard (coming soon)")
     st.info("We’ll add charts and summaries here once data is flowing.")
