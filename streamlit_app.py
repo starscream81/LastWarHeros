@@ -24,8 +24,9 @@ STAR_CHOICES = [
     "5.0"
 ]
 
+# Column order (Team immediately after Name)
 DISPLAY_COLUMNS = [
-    "name","type","role","level","power",
+    "name","team","type","role","level","power",
     "rail_gun","rail_gun_stars","armor","armor_stars",
     "data_chip","data_chip_stars","radar","radar_stars",
     "weapon","weapon_level","max_skill_level","skill1","skill2","skill3",
@@ -84,7 +85,7 @@ if "nav" not in st.session_state:
 page = st.sidebar.radio("Navigate", ["Heroes", "Add / Update Hero", "Dashboard (later)"], key="nav")
 
 # -------------------------------
-# HEROES PAGE (orange only, blanks instead of None)
+# HEROES PAGE (orange only, blanks, center-align except Name, sort by Team)
 # -------------------------------
 if page == "Heroes":
     st.title("🧙 Heroes")
@@ -102,18 +103,19 @@ if page == "Heroes":
         if "role_cat" in df.columns:
             df["role"] = df["role"].fillna(df["role_cat"])
 
-        # Sort by power desc (if present)
-        if "power" in df.columns:
-            df = df.sort_values(by=["power"], ascending=False, na_position="last")
+        # Sort by Team (1,2,3,4, then blanks)
+        order_map = {"1":1,"2":2,"3":3,"4":4}
+        df["__team_sort__"] = df.get("team").map(order_map).fillna(99)
+        df = df.sort_values(["__team_sort__","name"]).drop(columns="__team_sort__")
 
-        # Prepare a display copy
+        # Prepare display copy
         disp = df.copy()
 
         # Weapon display rule: only show "Yes", otherwise blank
         if "weapon" in disp.columns:
             disp["weapon"] = disp["weapon"].apply(lambda x: "Yes" if x is True else "")
 
-        # Convert all numeric fields to numeric then back to int where valid
+        # Force numeric types on non-star numeric columns (for formatting)
         for c in NUMERIC_NON_STAR:
             if c in disp.columns:
                 disp[c] = pd.to_numeric(disp[c], errors="coerce")
@@ -126,7 +128,7 @@ if page == "Heroes":
         disp = disp[show_cols]
         disp = disp.rename(columns=PRETTY_COLUMNS_MAP)
 
-        # Highlight rules (orange only)
+        # Orange highlight rules by Role
         orange = "background-color: #FFA50033;"  # light orange
         col_rg, col_rgs = PRETTY_COLUMNS_MAP["rail_gun"], PRETTY_COLUMNS_MAP["rail_gun_stars"]
         col_arm, col_arms = PRETTY_COLUMNS_MAP["armor"], PRETTY_COLUMNS_MAP["armor_stars"]
@@ -139,25 +141,18 @@ if page == "Heroes":
             for i in disp.index:
                 role = str(logic_df.at[i, "role"]).lower() if "role" in logic_df.columns else ""
                 if role == "attack":
-                    styles.at[i, col_rg] = orange
-                    styles.at[i, col_rgs] = orange
-                    styles.at[i, col_chip] = orange
-                    styles.at[i, col_chps] = orange
+                    for c in [col_rg,col_rgs,col_chip,col_chps]:
+                        styles.at[i, c] = orange
                 elif role == "defense":
-                    styles.at[i, col_arm] = orange
-                    styles.at[i, col_arms] = orange
-                    styles.at[i, col_rad] = orange
-                    styles.at[i, col_rads] = orange
+                    for c in [col_arm,col_arms,col_rad,col_rads]:
+                        styles.at[i, c] = orange
                 elif role == "support":
-                    styles.at[i, col_rg] = orange
-                    styles.at[i, col_rgs] = orange
-                    styles.at[i, col_rad] = orange
-                    styles.at[i, col_rads] = orange
+                    for c in [col_rg,col_rgs,col_rad,col_rads]:
+                        styles.at[i, c] = orange
             return styles
 
-        # Format numeric columns as integers (no decimals)
+        # Safe integer formatting (no decimals) for non-star numeric columns
         pretty_numeric = [PRETTY_COLUMNS_MAP[c] for c in NUMERIC_NON_STAR if PRETTY_COLUMNS_MAP.get(c) in disp.columns]
-
         def safe_int_format(x):
             try:
                 if pd.isna(x) or x == "":
@@ -165,7 +160,6 @@ if page == "Heroes":
                 return f"{int(float(x)):,}"
             except Exception:
                 return x
-
         fmt_map = {col: safe_int_format for col in pretty_numeric}
 
         styled = (
@@ -175,11 +169,14 @@ if page == "Heroes":
             .hide(axis="index")
         )
 
+        # Center every column except Name
+        to_center = [c for c in disp.columns if c != PRETTY_COLUMNS_MAP["name"]]
+        styled = styled.set_properties(subset=to_center, **{"text-align":"center"})
 
         st.write(styled, unsafe_allow_html=True)
 
 # -------------------------------
-# ADD / UPDATE HERO (full-record save)
+# ADD / UPDATE HERO (full-record save) + Team field
 # -------------------------------
 elif page == "Add / Update Hero":
     st.title("➕ Add / Update Hero")
@@ -190,7 +187,7 @@ elif page == "Add / Update Hero":
     if catalog.empty:
         st.error("Catalog is empty. Seed hero_catalog first.")
     else:
-        merged = catalog.merge(heroes[["name","power"]] if not heroes.empty else pd.DataFrame(columns=["name","power"]),
+        merged = catalog.merge(heroes[["name","power","team"]] if not heroes.empty else pd.DataFrame(columns=["name","power","team"]),
                                on="name", how="left")
         merged["power"] = merged["power"].fillna(0)
         merged = merged.sort_values("power", ascending=False)
@@ -207,6 +204,15 @@ elif page == "Add / Update Hero":
         st.caption(f"Type: **{row['type']}**  |  Role: **{row['role']}**  |  Power: **{int(row['power'])}**")
 
         hero_data = get_hero_record(name)
+
+        # Team dropdown: blank, 1, 2, 3, 4
+        current_team = str(hero_data.get("team") or "")
+        team_options = ["","1","2","3","4"]
+        try:
+            team_index = team_options.index(current_team)
+        except ValueError:
+            team_index = 0
+        team = st.selectbox("Team", team_options, index=team_index)
 
         with st.form("hero_full_update"):
             c1, c2 = st.columns(2)
@@ -232,6 +238,7 @@ elif page == "Add / Update Hero":
 
         if submitted:
             fields = {
+                "team": team or None,
                 "level": int(level),
                 "power": int(power),
                 "rail_gun": int(rail_gun),
