@@ -31,6 +31,12 @@ DISPLAY_COLUMNS = [
     "weapon","weapon_level","max_skill_level","skill1","skill2","skill3",
 ]
 
+# Helper to title-case headers and remove underscores
+def pretty_col(col: str) -> str:
+    return col.replace("_"," ").title()
+
+PRETTY_COLUMNS_MAP = {c: pretty_col(c) for c in DISPLAY_COLUMNS}
+
 # -------------------------------
 # Data helpers
 # -------------------------------
@@ -68,10 +74,13 @@ def upsert_hero_by_name(name: str, fields: Dict[str, Any]):
 # -------------------------------
 # UI nav
 # -------------------------------
-page = st.sidebar.radio("Navigate", ["Heroes", "Add / Update Hero", "Dashboard (later)"])
+if "nav" not in st.session_state:
+    st.session_state["nav"] = "Heroes"
+
+page = st.sidebar.radio("Navigate", ["Heroes", "Add / Update Hero", "Dashboard (later)"], key="nav")
 
 # -------------------------------
-# HEROES PAGE
+# HEROES PAGE (styled inline)
 # -------------------------------
 if page == "Heroes":
     st.title("🧙 Heroes")
@@ -82,32 +91,116 @@ if page == "Heroes":
     if heroes.empty and cat.empty:
         st.info("No heroes yet. Seed hero_catalog and add your first hero in 'Add / Update Hero'.")
     else:
+        # Merge to ensure Type/Role always present
         df = heroes.merge(cat, on="name", how="right", suffixes=("", "_cat"))
         if "type_cat" in df.columns:
             df["type"] = df["type"].fillna(df["type_cat"])
         if "role_cat" in df.columns:
             df["role"] = df["role"].fillna(df["role_cat"])
 
-        c1, c2, c3 = st.columns(3)
-        name_q = c1.text_input("Search Name")
-        type_q = c2.text_input("Filter Type")
-        role_q = c3.text_input("Filter Role")
-
-        if name_q:
-            df = df[df["name"].astype(str).str.contains(name_q, case=False, na=False)]
-        if type_q:
-            df = df[df["type"].astype(str).str.contains(type_q, case=False, na=False)]
-        if role_q:
-            df = df[df["role"].astype(str).str.contains(role_q, case=False, na=False)]
-
+        # Sort by power desc (if present)
         if "power" in df.columns:
             df = df.sort_values(by=["power"], ascending=False, na_position="last")
 
-        show_cols = [c for c in DISPLAY_COLUMNS if c in df.columns]
-        st.dataframe(df[show_cols], use_container_width=True)
+        # Prepare display copy: blank out None, weapon only "Yes"
+        disp = df.copy()
+
+        # Weapon display rule: only show "Yes", otherwise blank
+        if "weapon" in disp.columns:
+            disp["weapon"] = disp["weapon"].apply(lambda x: "Yes" if x is True else "")
+
+        # Replace NaN/None with blanks for every column
+        disp = disp.replace({None: ""})
+        disp = disp.fillna("")
+
+        # Select columns to display and rename headers
+        show_cols = [c for c in DISPLAY_COLUMNS if c in disp.columns]
+        disp = disp[show_cols]
+        disp = disp.rename(columns=PRETTY_COLUMNS_MAP)
+
+        # Build masks for styling on the original df (use original column names)
+        # Map pretty column names back to original for styling function
+        inv_pretty = {v: k for k, v in PRETTY_COLUMNS_MAP.items()}
+
+        # Styling function
+        orange = "background-color: #FFA50033;"  # light orange
+        green  = "background-color: #2ECC7133;"  # light green
+
+        def style_rows(styler_df_display: pd.DataFrame):
+            # Convert display df columns back to originals for logic
+            # We'll create a parallel "logic df" using the same row order
+            logic_df = df.reset_index(drop=True)
+            styles = pd.DataFrame("", index=styler_df_display.index, columns=styler_df_display.columns)
+
+            # Column name helpers (display names)
+            col_rg   = PRETTY_COLUMNS_MAP["rail_gun"]
+            col_rgs  = PRETTY_COLUMNS_MAP["rail_gun_stars"]
+            col_arm  = PRETTY_COLUMNS_MAP["armor"]
+            col_arms = PRETTY_COLUMNS_MAP["armor_stars"]
+            col_chip = PRETTY_COLUMNS_MAP["data_chip"]
+            col_chps = PRETTY_COLUMNS_MAP["data_chip_stars"]
+            col_rad  = PRETTY_COLUMNS_MAP["radar"]
+            col_rads = PRETTY_COLUMNS_MAP["radar_stars"]
+            col_role = PRETTY_COLUMNS_MAP["role"]
+
+            # Iterate rows
+            for i in styler_df_display.index:
+                # Safe getters
+                role = str(logic_df.at[i, "role"]) if "role" in logic_df.columns else ""
+
+                # Green overrides
+                def green_pair(num_col_display, star_col_display, num_col_logic, star_col_logic):
+                    try:
+                        num_ok  = pd.to_numeric(logic_df.at[i, num_col_logic]) == 40
+                    except Exception:
+                        num_ok = False
+                    star_ok = str(logic_df.at[i, star_col_logic]) == "5.0"
+                    if num_ok and star_ok:
+                        styles.at[i, num_col_display] = green
+                        styles.at[i, star_col_display] = green
+                        return True
+                    return False
+
+                # Apply green first (overrides)
+                _rg_green  = green_pair(col_rg,  col_rgs,  "rail_gun",   "rail_gun_stars")
+                _ar_green  = green_pair(col_arm, col_arms, "armor",      "armor_stars")
+                _dc_green  = green_pair(col_chip,col_chps, "data_chip",  "data_chip_stars")
+                _ra_green  = green_pair(col_rad, col_rads, "radar",      "radar_stars")
+
+                # Orange by role (only if not green on each pair)
+                if role.lower() == "attack":
+                    if not _rg_green:
+                        styles.at[i, col_rg]  = orange
+                        styles.at[i, col_rgs] = orange
+                    if not _dc_green:
+                        styles.at[i, col_chip] = orange
+                        styles.at[i, col_chps] = orange
+
+                elif role.lower() == "defense":
+                    if not _ar_green:
+                        styles.at[i, col_arm]  = orange
+                        styles.at[i, col_arms] = orange
+                    if not _ra_green:
+                        styles.at[i, col_rad]  = orange
+                        styles.at[i, col_rads] = orange
+
+                elif role.lower() == "support":
+                    if not _rg_green:
+                        styles.at[i, col_rg]  = orange
+                        styles.at[i, col_rgs] = orange
+                    if not _ra_green:
+                        styles.at[i, col_rad]  = orange
+                        styles.at[i, col_rads] = orange
+
+            return styles
+
+        # Use Pandas Styler to render inline colors and hide the index
+        styled = disp.style.apply(style_rows, axis=None).hide(axis="index")
+        # Show styled table (st.dataframe ignores styles; st.write renders Styler HTML)
+        st.write(styled, unsafe_allow_html=True)
 
 # -------------------------------
-# ADD / UPDATE HERO
+# ADD / UPDATE HERO (full-record save)
 # -------------------------------
 elif page == "Add / Update Hero":
     st.title("➕ Add / Update Hero")
@@ -123,7 +216,7 @@ elif page == "Add / Update Hero":
         merged["power"] = merged["power"].fillna(0)
         merged = merged.sort_values("power", ascending=False)
 
-        # Add blank option at top
+        # Add blank option at top and default to blank
         options = [""] + [f"{row['name']} (Power: {int(row['power'])})" for _, row in merged.iterrows()]
         selection = st.selectbox("Name", options, index=0)
 
@@ -143,24 +236,28 @@ elif page == "Add / Update Hero":
             c1, c2 = st.columns(2)
 
             with c1:
-                level = st.number_input("Level", min_value=0, max_value=200, step=1, value=hero_data.get("level", 0))
-                power = st.number_input("Power", min_value=0, max_value=100_000_000, step=100, value=hero_data.get("power", 0))
-                rail_gun = st.number_input("Rail Gun", min_value=0, max_value=999, step=1, value=hero_data.get("rail_gun", 0))
-                rail_gun_stars = st.selectbox("Rail Gun Stars", STAR_CHOICES, index=STAR_CHOICES.index(str(hero_data.get("rail_gun_stars", ""))) if str(hero_data.get("rail_gun_stars", "")) in STAR_CHOICES else 0)
-                armor = st.number_input("Armor", min_value=0, max_value=999, step=1, value=hero_data.get("armor", 0))
-                armor_stars = st.selectbox("Armor Stars", STAR_CHOICES, index=STAR_CHOICES.index(str(hero_data.get("armor_stars", ""))) if str(hero_data.get("armor_stars", "")) in STAR_CHOICES else 0)
-                data_chip = st.number_input("Data Chip", min_value=0, max_value=999, step=1, value=hero_data.get("data_chip", 0))
-                data_chip_stars = st.selectbox("Data Chip Stars", STAR_CHOICES, index=STAR_CHOICES.index(str(hero_data.get("data_chip_stars", ""))) if str(hero_data.get("data_chip_stars", "")) in STAR_CHOICES else 0)
+                level = st.number_input("Level", min_value=0, max_value=200, step=1, value=int(hero_data.get("level", 0) or 0))
+                power = st.number_input("Power", min_value=0, max_value=100_000_000, step=100, value=int(hero_data.get("power", 0) or 0))
+                rail_gun = st.number_input("Rail Gun", min_value=0, max_value=999, step=1, value=int(hero_data.get("rail_gun", 0) or 0))
+                rail_gun_stars_val = str(hero_data.get("rail_gun_stars", "") or "")
+                rail_gun_stars = st.selectbox("Rail Gun Stars", STAR_CHOICES, index=STAR_CHOICES.index(rail_gun_stars_val) if rail_gun_stars_val in STAR_CHOICES else 0)
+                armor = st.number_input("Armor", min_value=0, max_value=999, step=1, value=int(hero_data.get("armor", 0) or 0))
+                armor_stars_val = str(hero_data.get("armor_stars", "") or "")
+                armor_stars = st.selectbox("Armor Stars", STAR_CHOICES, index=STAR_CHOICES.index(armor_stars_val) if armor_stars_val in STAR_CHOICES else 0)
+                data_chip = st.number_input("Data Chip", min_value=0, max_value=999, step=1, value=int(hero_data.get("data_chip", 0) or 0))
+                data_chip_stars_val = str(hero_data.get("data_chip_stars", "") or "")
+                data_chip_stars = st.selectbox("Data Chip Stars", STAR_CHOICES, index=STAR_CHOICES.index(data_chip_stars_val) if data_chip_stars_val in STAR_CHOICES else 0)
 
             with c2:
-                radar = st.number_input("Radar", min_value=0, max_value=999, step=1, value=hero_data.get("radar", 0))
-                radar_stars = st.selectbox("Radar Stars", STAR_CHOICES, index=STAR_CHOICES.index(str(hero_data.get("radar_stars", ""))) if str(hero_data.get("radar_stars", "")) in STAR_CHOICES else 0)
+                radar = st.number_input("Radar", min_value=0, max_value=999, step=1, value=int(hero_data.get("radar", 0) or 0))
+                radar_stars_val = str(hero_data.get("radar_stars", "") or "")
+                radar_stars = st.selectbox("Radar Stars", STAR_CHOICES, index=STAR_CHOICES.index(radar_stars_val) if radar_stars_val in STAR_CHOICES else 0)
                 weapon = st.selectbox("Weapon", ["Yes", "No"], index=0 if hero_data.get("weapon", False) else 1)
-                weapon_level = st.number_input("Weapon Level", min_value=0, max_value=999, step=1, value=hero_data.get("weapon_level", 0))
-                max_skill_level = st.number_input("Max Skill Level", min_value=0, max_value=999, step=1, value=hero_data.get("max_skill_level", 0))
-                skill1 = st.number_input("Skill 1", min_value=0, max_value=999, step=1, value=hero_data.get("skill1", 0))
-                skill2 = st.number_input("Skill 2", min_value=0, max_value=999, step=1, value=hero_data.get("skill2", 0))
-                skill3 = st.number_input("Skill 3", min_value=0, max_value=999, step=1, value=hero_data.get("skill3", 0))
+                weapon_level = st.number_input("Weapon Level", min_value=0, max_value=999, step=1, value=int(hero_data.get("weapon_level", 0) or 0))
+                max_skill_level = st.number_input("Max Skill Level", min_value=0, max_value=999, step=1, value=int(hero_data.get("max_skill_level", 0) or 0))
+                skill1 = st.number_input("Skill 1", min_value=0, max_value=999, step=1, value=int(hero_data.get("skill1", 0) or 0))
+                skill2 = st.number_input("Skill 2", min_value=0, max_value=999, step=1, value=int(hero_data.get("skill2", 0) or 0))
+                skill3 = st.number_input("Skill 3", min_value=0, max_value=999, step=1, value=int(hero_data.get("skill3", 0) or 0))
 
             submitted = st.form_submit_button("Save")
 
