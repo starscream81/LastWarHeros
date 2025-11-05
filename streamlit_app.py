@@ -85,7 +85,7 @@ if "nav" not in st.session_state:
 page = st.sidebar.radio("Navigate", ["Heroes", "Add / Update Hero", "Dashboard (later)"], key="nav")
 
 # -------------------------------
-# HEROES PAGE (orange only, blanks, center-align except Name, sort by Team)
+# HEROES PAGE
 # -------------------------------
 if page == "Heroes":
     st.title("🧙 Heroes")
@@ -96,40 +96,36 @@ if page == "Heroes":
     if heroes.empty and cat.empty:
         st.info("No heroes yet. Seed hero_catalog and add your first hero in 'Add / Update Hero'.")
     else:
-        # Merge to ensure Type/Role always present
         df = heroes.merge(cat, on="name", how="right", suffixes=("", "_cat"))
         if "type_cat" in df.columns:
             df["type"] = df["type"].fillna(df["type_cat"])
         if "role_cat" in df.columns:
             df["role"] = df["role"].fillna(df["role_cat"])
 
-        # Sort by Team (1,2,3,4, then blanks)
+        # Sort by Team (1–4, then blanks)
         order_map = {"1":1,"2":2,"3":3,"4":4}
         df["__team_sort__"] = df.get("team").map(order_map).fillna(99)
         df = df.sort_values(["__team_sort__","name"]).drop(columns="__team_sort__")
 
-        # Prepare display copy
         disp = df.copy()
 
-        # Weapon display rule: only show "Yes", otherwise blank
+        # Only show "Yes" for weapon
         if "weapon" in disp.columns:
             disp["weapon"] = disp["weapon"].apply(lambda x: "Yes" if x is True else "")
 
-        # Force numeric types on non-star numeric columns (for formatting)
+        # Force numeric types on numeric columns
         for c in NUMERIC_NON_STAR:
             if c in disp.columns:
                 disp[c] = pd.to_numeric(disp[c], errors="coerce")
 
-        # Replace None/NaN with blanks
-        disp = disp.replace({None: ""}).fillna("")
+        disp = disp.replace({None:""}).fillna("")
 
-        # Choose and rename columns
         show_cols = [c for c in DISPLAY_COLUMNS if c in disp.columns]
         disp = disp[show_cols]
         disp = disp.rename(columns=PRETTY_COLUMNS_MAP)
 
-        # Orange highlight rules by Role
-        orange = "background-color: #FFA50033;"  # light orange
+        # Highlight rules (orange only)
+        orange = "background-color: #FFA50033;"
         col_rg, col_rgs = PRETTY_COLUMNS_MAP["rail_gun"], PRETTY_COLUMNS_MAP["rail_gun_stars"]
         col_arm, col_arms = PRETTY_COLUMNS_MAP["armor"], PRETTY_COLUMNS_MAP["armor_stars"]
         col_chip, col_chps = PRETTY_COLUMNS_MAP["data_chip"], PRETTY_COLUMNS_MAP["data_chip_stars"]
@@ -151,7 +147,7 @@ if page == "Heroes":
                         styles.at[i, c] = orange
             return styles
 
-        # Safe integer formatting (no decimals) for non-star numeric columns
+        # Safe integer formatting for non-star numeric columns
         pretty_numeric = [PRETTY_COLUMNS_MAP[c] for c in NUMERIC_NON_STAR if PRETTY_COLUMNS_MAP.get(c) in disp.columns]
         def safe_int_format(x):
             try:
@@ -162,21 +158,26 @@ if page == "Heroes":
                 return x
         fmt_map = {col: safe_int_format for col in pretty_numeric}
 
+        # Apply alignment: headers centered, Name left, others centered
         styled = (
             disp.style
             .apply(style_rows, axis=None)
             .format(formatter=fmt_map, na_rep="")
             .hide(axis="index")
+            .set_table_styles(
+                [
+                    {"selector":"th","props":[("text-align","center")]},
+                    {"selector":"td","props":[("text-align","center")]}
+                ]
+            )
         )
-
-        # Center every column except Name
-        to_center = [c for c in disp.columns if c != PRETTY_COLUMNS_MAP["name"]]
-        styled = styled.set_properties(subset=to_center, **{"text-align":"center"})
+        # Left align Name column only
+        styled = styled.set_properties(subset=[PRETTY_COLUMNS_MAP["name"]], **{"text-align":"left"})
 
         st.write(styled, unsafe_allow_html=True)
 
 # -------------------------------
-# ADD / UPDATE HERO (full-record save) + Team field
+# ADD / UPDATE HERO
 # -------------------------------
 elif page == "Add / Update Hero":
     st.title("➕ Add / Update Hero")
@@ -205,13 +206,10 @@ elif page == "Add / Update Hero":
 
         hero_data = get_hero_record(name)
 
-        # Team dropdown: blank, 1, 2, 3, 4
+        # Team dropdown: blank, 1–4
         current_team = str(hero_data.get("team") or "")
         team_options = ["","1","2","3","4"]
-        try:
-            team_index = team_options.index(current_team)
-        except ValueError:
-            team_index = 0
+        team_index = team_options.index(current_team) if current_team in team_options else 0
         team = st.selectbox("Team", team_options, index=team_index)
 
         with st.form("hero_full_update"):
