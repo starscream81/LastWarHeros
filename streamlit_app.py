@@ -82,10 +82,10 @@ def upsert_hero_by_name(name: str, fields: Dict[str, Any]):
 if "nav" not in st.session_state:
     st.session_state["nav"] = "Heroes"
 
-page = st.sidebar.radio("Navigate", ["Heroes", "Add / Update Hero", "Dashboard (later)"], key="nav")
+page = st.sidebar.radio("Navigate", ["Heroes", "Add / Update Hero", "Dashboard"], key="nav")
 
 # -------------------------------
-# HEROES PAGE
+# HEROES PAGE (orange highlights, blanks, centering from prior version)
 # -------------------------------
 if page == "Heroes":
     st.title("🧙 Heroes")
@@ -102,29 +102,22 @@ if page == "Heroes":
         if "role_cat" in df.columns:
             df["role"] = df["role"].fillna(df["role_cat"])
 
-        # Sort by Team (1–4, then blanks)
         order_map = {"1":1,"2":2,"3":3,"4":4}
         df["__team_sort__"] = df.get("team").map(order_map).fillna(99)
         df = df.sort_values(["__team_sort__","name"]).drop(columns="__team_sort__")
 
         disp = df.copy()
-
-        # Only show "Yes" for weapon
         if "weapon" in disp.columns:
             disp["weapon"] = disp["weapon"].apply(lambda x: "Yes" if x is True else "")
-
-        # Force numeric types on numeric columns
         for c in NUMERIC_NON_STAR:
             if c in disp.columns:
                 disp[c] = pd.to_numeric(disp[c], errors="coerce")
 
         disp = disp.replace({None:""}).fillna("")
-
         show_cols = [c for c in DISPLAY_COLUMNS if c in disp.columns]
         disp = disp[show_cols]
         disp = disp.rename(columns=PRETTY_COLUMNS_MAP)
 
-        # Highlight rules (orange only)
         orange = "background-color: #FFA50033;"
         col_rg, col_rgs = PRETTY_COLUMNS_MAP["rail_gun"], PRETTY_COLUMNS_MAP["rail_gun_stars"]
         col_arm, col_arms = PRETTY_COLUMNS_MAP["armor"], PRETTY_COLUMNS_MAP["armor_stars"]
@@ -147,7 +140,6 @@ if page == "Heroes":
                         styles.at[i, c] = orange
             return styles
 
-        # Safe integer formatting for non-star numeric columns
         pretty_numeric = [PRETTY_COLUMNS_MAP[c] for c in NUMERIC_NON_STAR if PRETTY_COLUMNS_MAP.get(c) in disp.columns]
         def safe_int_format(x):
             try:
@@ -158,7 +150,6 @@ if page == "Heroes":
                 return x
         fmt_map = {col: safe_int_format for col in pretty_numeric}
 
-        # Apply alignment: headers centered, Name left, others centered
         styled = (
             disp.style
             .apply(style_rows, axis=None)
@@ -171,13 +162,11 @@ if page == "Heroes":
                 ]
             )
         )
-        # Left align Name column only
         styled = styled.set_properties(subset=[PRETTY_COLUMNS_MAP["name"]], **{"text-align":"left"})
-
         st.write(styled, unsafe_allow_html=True)
 
 # -------------------------------
-# ADD / UPDATE HERO
+# ADD / UPDATE HERO (full-record save) + Team field
 # -------------------------------
 elif page == "Add / Update Hero":
     st.title("➕ Add / Update Hero")
@@ -206,7 +195,6 @@ elif page == "Add / Update Hero":
 
         hero_data = get_hero_record(name)
 
-        # Team dropdown: blank, 1–4
         current_team = str(hero_data.get("team") or "")
         team_options = ["","1","2","3","4"]
         team_index = team_options.index(current_team) if current_team in team_options else 0
@@ -262,8 +250,69 @@ elif page == "Add / Update Hero":
                 st.error(f"Failed to save: {e}")
 
 # -------------------------------
-# DASHBOARD (placeholder)
+# DASHBOARD (data-connected)
 # -------------------------------
 else:
-    st.title("📊 Dashboard (coming soon)")
-    st.info("We’ll add charts and summaries here once data is flowing.")
+    # Title line with image beside header
+    img_col, hdr_col = st.columns([1, 5])
+    with img_col:
+        # about 2x the size of the Heroes image; tweak width if you want it bigger/smaller
+        st.image("frog.png", use_column_width=False, width=320)
+    with hdr_col:
+        st.title("Shōckwave")
+        base_level = st.text_input("Base Level", value="", placeholder="Enter base level")
+
+    heroes = load_heroes()
+    if heroes.empty:
+        st.info("No hero data yet. Add heroes first in 'Add / Update Hero'.")
+        st.stop()
+
+    # Compute Total Hero Power
+    total_power = pd.to_numeric(heroes.get("power"), errors="coerce").fillna(0).sum()
+    st.text_input("Total Hero Power", value=f"{int(total_power):,}", disabled=True)
+
+    # Helper to render team sections
+    def render_team_section(team_num: int):
+        st.markdown(f"### Team {team_num}")
+        cols = st.columns([1, 1, 6])  # Type dropdown, Power box, then list
+        with cols[0]:
+            st.selectbox("Type", ["Tank","Air","Missile","Mixed"], key=f"team_type_{team_num}")
+
+        # Filter heroes that belong to this team
+        team_df = heroes[heroes.get("team") == str(team_num)].copy()
+        team_df["power"] = pd.to_numeric(team_df.get("power"), errors="coerce").fillna(0)
+        team_df["level"] = pd.to_numeric(team_df.get("level"), errors="coerce").fillna(0)
+
+        team_df = team_df.sort_values("power", ascending=False)
+        top5 = team_df[["name","level","power"]].head(5)
+
+        # Pad with blanks to always show 5 rows
+        while len(top5) < 5:
+            top5 = pd.concat([top5, pd.DataFrame([{"name":"","level":"","power":""}])], ignore_index=True)
+
+        power_sum = int(team_df["power"].sum())
+        with cols[1]:
+            st.text_input("Power", value=f"{power_sum:,}", disabled=True)
+        with cols[2]:
+            # Show Name, Level, Power ordered by Power
+            if not top5.empty:
+                tdisp = top5.rename(columns={"name":"Name","level":"Level","power":"Power"})
+                # integer formatting for Level/Power
+                def fmt_int(x):
+                    try:
+                        if x == "" or pd.isna(x):
+                            return ""
+                        return f"{int(float(x)):,}"
+                    except Exception:
+                        return x
+                tstyled = tdisp.style.format({"Level": fmt_int, "Power": fmt_int}).hide(axis="index")
+                st.write(tstyled, unsafe_allow_html=True)
+            else:
+                st.write("")
+
+        st.markdown("---")
+
+    render_team_section(1)
+    render_team_section(2)
+    render_team_section(3)
+    render_team_section(4)
