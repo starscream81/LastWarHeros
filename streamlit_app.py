@@ -31,7 +31,12 @@ DISPLAY_COLUMNS = [
     "weapon","weapon_level","max_skill_level","skill1","skill2","skill3",
 ]
 
-# Helper to title-case headers and remove underscores
+NUMERIC_NON_STAR = [
+    "level","power","rail_gun","armor","data_chip","radar",
+    "weapon_level","max_skill_level","skill1","skill2","skill3",
+]
+STAR_COLS = ["rail_gun_stars","armor_stars","data_chip_stars","radar_stars"]
+
 def pretty_col(col: str) -> str:
     return col.replace("_"," ").title()
 
@@ -102,101 +107,106 @@ if page == "Heroes":
         if "power" in df.columns:
             df = df.sort_values(by=["power"], ascending=False, na_position="last")
 
-        # Prepare display copy: blank out None, weapon only "Yes"
+        # Prepare a display copy
         disp = df.copy()
 
         # Weapon display rule: only show "Yes", otherwise blank
         if "weapon" in disp.columns:
-            disp["weapon"] = disp["weapon"].apply(lambda x: "Yes" if x is True else "")
+            disp["weapon"] = disp["weapon"].apply(lambda x: "Yes" if x is True else None)
 
-        # Replace NaN/None with blanks for every column
-        disp = disp.replace({None: ""})
-        disp = disp.fillna("")
+        # Ensure numeric non-star columns are numeric so formatting works
+        for c in NUMERIC_NON_STAR:
+            if c in disp.columns:
+                disp[c] = pd.to_numeric(disp[c], errors="coerce")
 
-        # Select columns to display and rename headers
+        # Select columns and rename headers for display
         show_cols = [c for c in DISPLAY_COLUMNS if c in disp.columns]
         disp = disp[show_cols]
         disp = disp.rename(columns=PRETTY_COLUMNS_MAP)
 
-        # Build masks for styling on the original df (use original column names)
-        # Map pretty column names back to original for styling function
-        inv_pretty = {v: k for k, v in PRETTY_COLUMNS_MAP.items()}
-
-        # Styling function
+        # Build highlight styles (work off original df row order)
         orange = "background-color: #FFA50033;"  # light orange
         green  = "background-color: #2ECC7133;"  # light green
 
-        def style_rows(styler_df_display: pd.DataFrame):
-            # Convert display df columns back to originals for logic
-            # We'll create a parallel "logic df" using the same row order
+        # Handy pretty-name lookups
+        col_rg   = PRETTY_COLUMNS_MAP["rail_gun"]
+        col_rgs  = PRETTY_COLUMNS_MAP["rail_gun_stars"]
+        col_arm  = PRETTY_COLUMNS_MAP["armor"]
+        col_arms = PRETTY_COLUMNS_MAP["armor_stars"]
+        col_chip = PRETTY_COLUMNS_MAP["data_chip"]
+        col_chps = PRETTY_COLUMNS_MAP["data_chip_stars"]
+        col_rad  = PRETTY_COLUMNS_MAP["radar"]
+        col_rads = PRETTY_COLUMNS_MAP["radar_stars"]
+        col_role = PRETTY_COLUMNS_MAP["role"]
+
+        def style_rows(_):
+            # styles table starts empty
+            styles = pd.DataFrame("", index=disp.index, columns=disp.columns)
+
+            # Walk rows in parallel using original df for logic
             logic_df = df.reset_index(drop=True)
-            styles = pd.DataFrame("", index=styler_df_display.index, columns=styler_df_display.columns)
 
-            # Column name helpers (display names)
-            col_rg   = PRETTY_COLUMNS_MAP["rail_gun"]
-            col_rgs  = PRETTY_COLUMNS_MAP["rail_gun_stars"]
-            col_arm  = PRETTY_COLUMNS_MAP["armor"]
-            col_arms = PRETTY_COLUMNS_MAP["armor_stars"]
-            col_chip = PRETTY_COLUMNS_MAP["data_chip"]
-            col_chps = PRETTY_COLUMNS_MAP["data_chip_stars"]
-            col_rad  = PRETTY_COLUMNS_MAP["radar"]
-            col_rads = PRETTY_COLUMNS_MAP["radar_stars"]
-            col_role = PRETTY_COLUMNS_MAP["role"]
+            for i in disp.index:
+                role = str(logic_df.at[i, "role"]).lower() if "role" in logic_df.columns else ""
 
-            # Iterate rows
-            for i in styler_df_display.index:
-                # Safe getters
-                role = str(logic_df.at[i, "role"]) if "role" in logic_df.columns else ""
-
-                # Green overrides
-                def green_pair(num_col_display, star_col_display, num_col_logic, star_col_logic):
+                # GREEN override pairs
+                def green_pair(num_logic, star_logic, num_disp, star_disp):
                     try:
-                        num_ok  = pd.to_numeric(logic_df.at[i, num_col_logic]) == 40
+                        num_ok = pd.to_numeric(logic_df.at[i, num_logic]) == 40
                     except Exception:
                         num_ok = False
-                    star_ok = str(logic_df.at[i, star_col_logic]) == "5.0"
+                    star_ok = str(logic_df.at[i, star_logic]) == "5.0"
                     if num_ok and star_ok:
-                        styles.at[i, num_col_display] = green
-                        styles.at[i, star_col_display] = green
+                        styles.at[i, num_disp] = green
+                        styles.at[i, star_disp] = green
                         return True
                     return False
 
-                # Apply green first (overrides)
-                _rg_green  = green_pair(col_rg,  col_rgs,  "rail_gun",   "rail_gun_stars")
-                _ar_green  = green_pair(col_arm, col_arms, "armor",      "armor_stars")
-                _dc_green  = green_pair(col_chip,col_chps, "data_chip",  "data_chip_stars")
-                _ra_green  = green_pair(col_rad, col_rads, "radar",      "radar_stars")
+                rg_green = green_pair("rail_gun", "rail_gun_stars", col_rg, col_rgs)
+                ar_green = green_pair("armor", "armor_stars", col_arm, col_arms)
+                dc_green = green_pair("data_chip", "data_chip_stars", col_chip, col_chps)
+                ra_green = green_pair("radar", "radar_stars", col_rad, col_rads)
 
-                # Orange by role (only if not green on each pair)
-                if role.lower() == "attack":
-                    if not _rg_green:
+                # ORANGE by role, only if not already green on that pair
+                if role == "attack":
+                    if not rg_green:
                         styles.at[i, col_rg]  = orange
                         styles.at[i, col_rgs] = orange
-                    if not _dc_green:
+                    if not dc_green:
                         styles.at[i, col_chip] = orange
                         styles.at[i, col_chps] = orange
 
-                elif role.lower() == "defense":
-                    if not _ar_green:
+                elif role == "defense":
+                    if not ar_green:
                         styles.at[i, col_arm]  = orange
                         styles.at[i, col_arms] = orange
-                    if not _ra_green:
+                    if not ra_green:
                         styles.at[i, col_rad]  = orange
                         styles.at[i, col_rads] = orange
 
-                elif role.lower() == "support":
-                    if not _rg_green:
+                elif role == "support":
+                    if not rg_green:
                         styles.at[i, col_rg]  = orange
                         styles.at[i, col_rgs] = orange
-                    if not _ra_green:
+                    if not ra_green:
                         styles.at[i, col_rad]  = orange
                         styles.at[i, col_rads] = orange
 
             return styles
 
-        # Use Pandas Styler to render inline colors and hide the index
-        styled = disp.style.apply(style_rows, axis=None).hide(axis="index")
-        # Show styled table (st.dataframe ignores styles; st.write renders Styler HTML)
+        # Integer formatting for all non-star numeric columns; stars keep their decimals
+        pretty_numeric = [PRETTY_COLUMNS_MAP[c] for c in NUMERIC_NON_STAR if PRETTY_COLUMNS_MAP.get(c) in disp.columns]
+        fmt_map = {col: "{:,.0f}" for col in pretty_numeric}
+
+        styled = (
+            disp
+            .style
+            .apply(style_rows, axis=None)
+            .format(formatter=fmt_map, na_rep="")   # integers w/o decimals; blanks for NA
+            .hide(axis="index")                     # hide row index column
+        )
+
+        # Render styled HTML (st.dataframe ignores styles)
         st.write(styled, unsafe_allow_html=True)
 
 # -------------------------------
@@ -220,7 +230,6 @@ elif page == "Add / Update Hero":
         options = [""] + [f"{row['name']} (Power: {int(row['power'])})" for _, row in merged.iterrows()]
         selection = st.selectbox("Name", options, index=0)
 
-        # No selection = empty state
         if selection == "":
             st.info("Select a hero from the dropdown to view or update their data.")
             st.stop()
