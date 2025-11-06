@@ -514,7 +514,7 @@ else:
 
     st.caption(f"Detected HQ: {''.join(ch for ch in str(st.session_state.get('base_level_str','')) if ch.isdigit()) or st.session_state.get('cached_HQ', 0)}")
 
-        def get_level(key: str) -> int:
+    def get_level(key: str) -> int:
         # Safely parse building level, ignoring any non-digits
         raw = str(st.session_state.get(f"buildings_{key}", "") or "")
         digits = "".join(ch for ch in raw if ch.isdigit())
