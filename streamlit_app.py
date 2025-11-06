@@ -411,6 +411,11 @@ elif page == "Buildings":
         building_input("Chip Lab", "chip_lab")
         building_input("Component Factory", "component_factory")
         building_input("Gear Factory", "gear_factory")
+        building_input("Builder's Hut", "builders_hut")
+        building_input("Tavern", "tavern")
+        building_input("Tactical Institute", "tactical_institute")
+        building_input("Alliance Hub", "alliance_support_hub")
+
 
     with col2:
         building_input("Coin Vault", "coin_vault")
@@ -451,10 +456,6 @@ elif page == "Buildings":
         building_input("Oil Well 3", "oil_well_3")
         building_input("Oil Well 4", "oil_well_4")
         building_input("Oil Well 5", "oil_well_5")
-        building_input("Builder's Hut", "builders_hut")
-        building_input("Tavern", "tavern")
-        building_input("Tactical Institute", "tactical_institute")
-        building_input("Alliance Hub", "alliance_support_hub")
 
     st.write("---")
     if st.button("💾 Save Buildings Data"):
