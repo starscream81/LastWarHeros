@@ -75,6 +75,32 @@ def upsert_hero_by_name(name: str, fields: Dict[str, Any]):
         sb.table("heroes").update(fields).eq("id", existing[0]["id"]).execute()
     else:
         sb.table("heroes").insert({"name": name, **fields}).execute()
+        
+# --- Dashboard settings persistence (Supabase) ---
+def load_settings() -> dict:
+    try:
+        data = sb.table("dashboard_settings").select("*").eq("id", 1).execute().data
+        if data:
+            return data[0]
+        # seed row if missing
+        sb.table("dashboard_settings").insert({"id": 1}).execute()
+        return {}
+    except Exception:
+        return {}
+
+def save_settings_from_state():
+    payload = {
+        "id": 1,
+        "base_level": st.session_state.get("base_level_str", ""),
+        "team1_power": st.session_state.get("team_power_1_manual", ""),
+        "team2_power": st.session_state.get("team_power_2_manual", ""),
+        "team3_power": st.session_state.get("team_power_3_manual", ""),
+        "team4_power": st.session_state.get("team_power_4_manual", ""),
+    }
+    try:
+        sb.table("dashboard_settings").upsert(payload).execute()
+    except Exception as e:
+        st.warning(f"Save failed: {e}")
 
 def safe_int_format(x):
     try:
@@ -263,10 +289,22 @@ elif page == "Add / Update Hero":
                 st.error(f"Failed to save: {e}")
 
 # -------------------------------
-# DASHBOARD (compact header; tight HTML tables; no index)
+# DASHBOARD (persistent Base Level + Team Power; tight HTML tables)
 # -------------------------------
 else:
     heroes = load_heroes()
+
+    # Load persisted settings and prefill session keys once
+    settings = load_settings()
+    for key, default in [
+        ("base_level_str", settings.get("base_level", "")),
+        ("team_power_1_manual", settings.get("team1_power", "")),
+        ("team_power_2_manual", settings.get("team2_power", "")),
+        ("team_power_3_manual", settings.get("team3_power", "")),
+        ("team_power_4_manual", settings.get("team4_power", "")),
+    ]:
+        if key not in st.session_state:
+            st.session_state[key] = default or ""
 
     # Header: image + title; Base Level & Total under title (left block)
     img_col, hdr_col = st.columns([1, 7])
@@ -278,15 +316,18 @@ else:
 
         base_col, total_col, _sp = st.columns([1, 2, 4])
         with base_col:
-            # tiny 2-digit text box (no +/-)
-            base_level_str = st.text_input(
+            # tiny 2-digit text box (persisted)
+            bl = st.text_input(
                 "Base Level",
                 value=st.session_state.get("base_level_str", ""),
                 max_chars=2,
                 key="base_level_str",
+                on_change=save_settings_from_state,
             )
-            if base_level_str and not base_level_str.isdigit():
-                st.session_state.base_level_str = "".join(ch for ch in base_level_str if ch.isdigit())[:2]
+            # sanitize to digits only
+            if bl and not bl.isdigit():
+                st.session_state.base_level_str = "".join(ch for ch in bl if ch.isdigit())[:2]
+                save_settings_from_state()
 
         with total_col:
             total_power = 0 if heroes.empty else pd.to_numeric(heroes.get("power"), errors="coerce").fillna(0).sum()
@@ -299,7 +340,7 @@ else:
     def render_team_section(team_num: int):
         st.markdown("---")
 
-        # One line: Team X | Type | manual Power (left-aligned)
+        # One line: Team X | Type | manual Power (persisted) (left-aligned)
         head, typecol, pcol, _sp = st.columns([1.1, 0.9, 0.9, 5.1])
         with head:
             st.markdown(f"### Team {team_num}")
@@ -307,7 +348,13 @@ else:
             st.selectbox("Type", ["Tank", "Air", "Missile", "Mixed"], key=f"team_type_{team_num}")
         with pcol:
             manual_key = f"team_power_{team_num}_manual"
-            st.text_input("Power", value=st.session_state.get(manual_key, ""), max_chars=10, key=manual_key)
+            st.text_input(
+                "Power",
+                value=st.session_state.get(manual_key, ""),
+                max_chars=10,
+                key=manual_key,
+                on_change=save_settings_from_state,
+            )
 
         # Data for table (Name, Level, Power)
         team_df = heroes[heroes.get("team") == str(team_num)].copy()
@@ -329,9 +376,9 @@ else:
             except Exception:
                 return x
 
-        # Build a tight, centered HTML table (no index)
+        # Tight, centered, indexless HTML table
         NAME_W, LEVEL_W, POWER_W = "140px", "70px", "110px"
-        TABLE_W = "360px"  # whole table width (well under half page)
+        TABLE_W = "360px"
 
         styler = (
             tdisp.style
@@ -341,17 +388,12 @@ else:
                 {"selector": "table", "props": [("width", TABLE_W), ("table-layout", "fixed"), ("margin-left", "0")]},
                 {"selector": "th", "props": [("text-align", "center"), ("padding", "4px 6px")]},
                 {"selector": "td", "props": [("text-align", "center"), ("padding", "4px 6px")]},
-                # force column widths
                 {"selector": "th.col0, td.col0", "props": [("width", NAME_W)]},
                 {"selector": "th.col1, td.col1", "props": [("width", LEVEL_W)]},
                 {"selector": "th.col2, td.col2", "props": [("width", POWER_W)]},
             ])
         )
-
-        # Streamlit sometimes ignores Styler and shows a DataFrame (bringing back index).
-        # Render as pure HTML to guarantee no index and strict widths.
-        html = styler.to_html()
-        st.markdown(html, unsafe_allow_html=True)
+        st.markdown(styler.to_html(), unsafe_allow_html=True)
 
     render_team_section(1)
     render_team_section(2)
