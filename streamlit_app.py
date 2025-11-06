@@ -434,8 +434,27 @@ def level_options(hq: int):
                 st.selectbox("Level", opts, index=0, key=f"buildings_{key}", label_visibility="collapsed")
 
 # -------------------------------
-# DASHBOARD (Teams 1–3 only; persistent Base Level & Power)
+# HEROES PAGE
 # -------------------------------
+if page == "Heroes":
+    ...  # your heroes code here
+
+# -------------------------------
+# ADD / UPDATE HERO PAGE
+# -------------------------------
+elif page == "Add / Update Hero":
+    ...  # your add/update code here
+
+# -------------------------------
+# BUILDINGS PAGE
+# -------------------------------
+elif page == "Buildings":
+    ...  # the buildings code block goes here (the one we made earlier)
+
+# -------------------------------
+# DASHBOARD PAGE
+# -------------------------------
+
 else:
     heroes = load_heroes()
 
