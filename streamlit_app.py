@@ -318,24 +318,23 @@ elif page == "Add / Update Hero":
                 st.error(f"Failed to save: {e}")
 
 # -------------------------------
-# DASHBOARD (simplified view: Team headers only; no hero tables)
+# DASHBOARD (Teams 1–3 only; persistent Base Level & Power)
 # -------------------------------
 else:
     heroes = load_heroes()
 
-    # Load persisted settings once
+    # Load persisted settings
     settings = load_settings()
     for key, default in [
         ("base_level_str", settings.get("base_level", "")),
         ("team_power_1_manual", settings.get("team1_power", "")),
         ("team_power_2_manual", settings.get("team2_power", "")),
         ("team_power_3_manual", settings.get("team3_power", "")),
-        ("team_power_4_manual", settings.get("team4_power", "")),
     ]:
         if key not in st.session_state:
             st.session_state[key] = default or ""
 
-    # Header layout: frog image left, title & inputs right
+    # Header layout
     img_col, hdr_col = st.columns([1, 7])
     with img_col:
         st.image("frog.png", use_column_width=False, width=320)
@@ -343,7 +342,7 @@ else:
     with hdr_col:
         st.title("Shōckwave")
 
-        # Base Level and Total Hero Power directly under title
+        # Base Level & Total Hero Power directly under title
         base_col, total_col, _sp = st.columns([1, 2, 4])
         with base_col:
             bl = st.text_input(
@@ -361,10 +360,10 @@ else:
             total_power = 0 if heroes.empty else pd.to_numeric(heroes.get("power"), errors="coerce").fillna(0).sum()
             st.text_input("Total Hero Power", value=f"{int(total_power):,}", disabled=True, key="total_power")
 
-    # Simple helper to render Team rows
+    # Helper for team rows
     def render_team_row(team_num: int):
         st.markdown("---")
-        row_cols = st.columns([1.2, 1.0, 1.0, 6.8])  # label | dropdown | power | spacer
+        row_cols = st.columns([1.2, 1.0, 1.0, 6.8])
         with row_cols[0]:
             st.markdown(f"### Team {team_num}")
         with row_cols[1]:
@@ -379,8 +378,7 @@ else:
                 on_change=save_settings_from_state,
             )
 
-    # Four clean Team rows
+    # Only render 1–3
     render_team_row(1)
     render_team_row(2)
     render_team_row(3)
-    render_team_row(4)
