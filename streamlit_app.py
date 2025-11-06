@@ -309,24 +309,41 @@ elif page == "Add / Update Hero":
                 st.error(f"Failed to save: {e}")
 
 # -------------------------------
-# BUILDINGS PAGE
+# BUILDINGS PAGE (stable dropdowns)
 # -------------------------------
 elif page == "Buildings":
     st.title("🏗️ Buildings")
 
-    # pull HQ level from Dashboard (persisted or current session)
-    base_level_str = st.session_state.get("base_level_str", "") or ""
+    # 1) Ensure we have a stable base_level in session (pull from Supabase if needed)
+    settings = load_settings()
+    if "base_level_str" not in st.session_state or st.session_state["base_level_str"] == "":
+        st.session_state["base_level_str"] = settings.get("base_level", "") or ""
+
+    # 2) Compute HQ level safely
+    bl = (st.session_state.get("base_level_str") or "").strip()
     try:
-        hq_level = int(base_level_str) if base_level_str.isdigit() else 0
+        hq_level = int(bl) if bl.isdigit() else 0
     except Exception:
         hq_level = 0
-    hq_level = max(0, min(99, hq_level))  # clamp for safety
+    hq_level = max(0, min(99, hq_level))  # clamp
 
-    def level_options(hq: int):
-        # blank first, then count down from HQ to 1
+    # 3) Build options and cache them; if something causes a rerun and hq_level goes 0,
+    #    reuse the last good options so the dropdowns never go blank.
+    def make_level_options(hq: int):
+        # blank first, then count down
         return [""] + [str(i) for i in range(hq, 0, -1)]
 
-    # Define the list exactly as requested
+    new_opts = make_level_options(hq_level)
+    if "buildings_level_options" not in st.session_state:
+        st.session_state["buildings_level_options"] = new_opts
+    else:
+        # If new options would be only [""] (i.e., HQ unknown), keep previous non-empty set
+        if len(new_opts) > 1 or len(st.session_state["buildings_level_options"]) <= 1:
+            st.session_state["buildings_level_options"] = new_opts
+
+    level_options = st.session_state["buildings_level_options"]
+
+    # 4) Sections definition
     sections = [
         ("Headquarters", "hq", False),
         ("Wall", "wall", False),
@@ -413,7 +430,7 @@ elif page == "Buildings":
         ("Gear Factory", "gear_factory", False),
     ]
 
-    # Render rows
+    # 5) Render rows
     for label, key, is_header in sections:
         if is_header:
             st.subheader(label)
@@ -422,9 +439,10 @@ elif page == "Buildings":
         c1, c2 = st.columns([2.5, 1.0])
         with c1:
             st.markdown(label)
+
         with c2:
             if key == "hq":
-                # Headquarters equals Base Level; read-only
+                # HQ mirrors base level (read-only)
                 st.text_input(
                     "Level",
                     value=str(hq_level) if hq_level > 0 else "",
@@ -435,7 +453,7 @@ elif page == "Buildings":
             else:
                 st.selectbox(
                     "Level",
-                    level_options(hq_level),
+                    level_options,              # <-- use cached stable options
                     index=0,
                     key=f"buildings_{key}",
                     label_visibility="collapsed",
