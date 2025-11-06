@@ -684,4 +684,5 @@ else:
     row_pair_pct("Recon Plane:", pct_rcn, "Training Base", pct_tbase)
     row_pair_pct("Alliance Hub:", pct_hub, "Material Workshop", pct_mw)
     row_pair_pct("Builder's Hut:", pct_bld, "Tactical Institute:", pct_tac)
-    row_pair_pct("Tavern:", pct_tav)
+    row_pair_pct("Tavern:", pct_tav, "", "")
+
