@@ -593,7 +593,8 @@ else:
         g = int(255 * min(100, p) / 100)
         st.markdown(
             f"<div style='display:inline-block;padding:4px 8px;border-radius:6px;"
-            f"background:rgb({r},{g},0);color:white;font-weight:600;text-align:center;min-width:70px'>{value_pct}</div>",
+            f"background:rgb({r},{g},0);color:black;text-shadow:0 0 2px rgba(255,255,255,0.5);"
+            f"font-weight:600;text-align:center;min-width:70px'>{value_pct}</div>",
             unsafe_allow_html=True,
         )
 
