@@ -75,6 +75,18 @@ def upsert_hero_by_name(name: str, fields: Dict[str, Any]):
         sb.table("heroes").update(fields).eq("id", existing[0]["id"]).execute()
     else:
         sb.table("heroes").insert({"name": name, **fields}).execute()
+
+# ---------- KV helpers ----------
+def kv_get_all() -> dict:
+    try:
+        res = sb.table("buildings_kv").select("key,value").execute()
+        return {r["key"]: r["value"] for r in (res.data or [])}
+    except Exception:
+        return {}
+
+def kv_set_one(k: str, v: str):
+    sb.table("buildings_kv").upsert({"key": k, "value": str(v)}).execute()
+
         
 # --- Dashboard settings persistence (Supabase) ---
 # --- Dashboard settings persistence (Supabase) ---
@@ -321,85 +333,60 @@ elif page == "Add / Update Hero":
 elif page == "Buildings":
     st.subheader("Buildings")
 
-    # ---------- Supabase persistence ----------
-    def load_buildings():
-        try:
-            res = sb.table("buildings_data").select("data").order("updated_at", desc=True).limit(1).execute()
-            if res.data and len(res.data) > 0:
-                return res.data[0]["data"]
-        except Exception as e:
-            st.warning(f"Failed to load buildings data: {e}")
-        return {}
+    # Load KV values into session once
+    if "buildings_loaded" not in st.session_state:
+        for k, v in kv_get_all().items():
+            if k.startswith("buildings_"):     # keep names consistent
+                st.session_state[k] = v
+        st.session_state["buildings_loaded"] = True
 
-    def save_buildings():
-        try:
-            payload = {
-                "data": {k: v for k, v in st.session_state.items() if k.startswith("buildings_")}
-            }
-            sb.table("buildings_data").upsert(payload).execute()
-            st.success("✅ Buildings saved!", icon="💾")
-        except Exception as e:
-            st.error(f"Save failed: {e}")
-    # --- autosave support
-    if "autosave_buildings" not in st.session_state:
-        st.session_state["autosave_buildings"] = True  # default ON so you don't lose work
+    # Autosave handler for a single field
+    def _building_changed_kv(ss_key: str):
+        kv_set_one(ss_key, st.session_state.get(ss_key, ""))
 
-    def _building_changed():
-        # autosave every change
-        if st.session_state.get("autosave_buildings"):
-            try:
-                save_buildings()
-            except Exception as e:
-                st.warning(f"Autosave failed: {e}")
-           
-
-    # --- Robust building value reader (accepts 'buildings_{key}', 'building_{key}', or '{key}')
-    def _read_building_raw(key: str) -> str:
-        for k in (f"buildings_{key}", f"building_{key}", key):
-            v = st.session_state.get(k, None)
-            if v is not None and str(v).strip() != "":
-                return str(v)
-        return ""
-
-    # 1) Initialize once
-    def init_building_field(key: str, default: str = "") -> None:
+    # Input helper (per-field KV autosave)
+    def building_input(label: str, key: str):
         ss_key = f"buildings_{key}"
         if ss_key not in st.session_state:
-            st.session_state[ss_key] = default
-
-    # 2) Render a text box that never wipes itself
-    def building_input(label: str, key: str, width: int = 60):
-        ss_key = f"buildings_{key}"
-        init_building_field(key, "")  # only sets once
+            st.session_state[ss_key] = ""
         st.text_input(
             label,
             key=ss_key,
+            on_change=_building_changed_kv,
+            args=(ss_key,),
             label_visibility="visible",
-            on_change=_building_changed,   # <— autosave on every edit
         )
 
-    # Numeric helpers
-    def get_level(key: str) -> int:
-        raw = _read_building_raw(key)
-        digits = "".join(ch for ch in raw if ch.isdigit())
-        return int(digits) if digits else 0
+    # Optional quick-update row that shows stored value and only updates that key
+    def update_row(label: str, key: str):
+        ss_key = f"buildings_{key}"
+        stored = st.session_state.get(ss_key, "")
+        c1, c2, c3 = st.columns([1.5, 1.0, 0.8])
+        with c1:
+            st.markdown(f"**{label}**")
+            st.caption(f"Stored: {stored if str(stored).strip() else '—'}")
+        with c2:
+            st.text_input("New", key=f"edit_{key}", label_visibility="collapsed")
+        with c3:
+            if st.button("Update", key=f"btn_{key}"):
+                new_val = st.session_state.get(f"edit_{key}", "")
+                st.session_state[ss_key] = new_val
+                kv_set_one(ss_key, new_val)
+                st.toast(f"{label} updated", icon="✅")
 
-    # Load once at page start
-    if "buildings_loaded" not in st.session_state:
-        saved = load_buildings()
-        for k, v in saved.items():
-            st.session_state[k] = v
-        st.session_state["buildings_loaded"] = True
-
-    # -------- Input fields --------
+    # -------- Inputs --------
     col1, col2 = st.columns(2)
 
     with col1:
         building_input("Headquarters", "hq_level")
         building_input("Wall", "wall")
+
+        # Tech Centers
         building_input("Tech Center 1", "tech_center_1")
         building_input("Tech Center 2", "tech_center_2")
         building_input("Tech Center 3", "tech_center_3")
+
+        # Military Support (left column items)
         building_input("Tank Center", "tank_center")
         building_input("Aircraft Center", "aircraft_center")
         building_input("Missile Center", "missile_center")
@@ -424,20 +411,19 @@ elif page == "Buildings":
         building_input("Recon Plane 1", "recon_plane_1")
         building_input("Recon Plane 2", "recon_plane_2")
         building_input("Recon Plane 3", "recon_plane_3")
+
+        # Your requested support buildings under Recon Plane 3
         building_input("Drone Parts Workshop", "drone_parts_workshop")
         building_input("Chip Lab", "chip_lab")
         building_input("Component Factory", "component_factory")
         building_input("Gear Factory", "gear_factory")
-        building_input("Builder's Hut", "builders_hut")
-        building_input("Tavern", "tavern")
-        building_input("Tactical Institute", "tactical_institute")
-        building_input("Alliance Hub", "alliance_support_hub")
-
 
     with col2:
         building_input("Coin Vault", "coin_vault")
         building_input("Iron Warehouse", "iron_warehouse")
         building_input("Food Warehouse", "food_warehouse")
+
+        # Resource production
         building_input("Gold Mine 1", "gold_mine_1")
         building_input("Gold Mine 2", "gold_mine_2")
         building_input("Gold Mine 3", "gold_mine_3")
@@ -453,6 +439,14 @@ elif page == "Buildings":
         building_input("Farmland 3", "farmland_3")
         building_input("Farmland 4", "farmland_4")
         building_input("Farmland 5", "farmland_5")
+
+        # Oil Wells (your request)
+        building_input("Oil Well 1", "oil_well_1")
+        building_input("Oil Well 2", "oil_well_2")
+        building_input("Oil Well 3", "oil_well_3")
+        building_input("Oil Well 4", "oil_well_4")
+        building_input("Oil Well 5", "oil_well_5")
+
         building_input("Smelter 1", "smelter_1")
         building_input("Smelter 2", "smelter_2")
         building_input("Smelter 3", "smelter_3")
@@ -468,21 +462,31 @@ elif page == "Buildings":
         building_input("Material Workshop 3", "material_workshop_3")
         building_input("Material Workshop 4", "material_workshop_4")
         building_input("Material Workshop 5", "material_workshop_5")
-        building_input("Oil Well 1", "oil_well_1")
-        building_input("Oil Well 2", "oil_well_2")
-        building_input("Oil Well 3", "oil_well_3")
-        building_input("Oil Well 4", "oil_well_4")
-        building_input("Oil Well 5", "oil_well_5")
 
     st.write("---")
-    if st.button("💾 Save Buildings Data"):
-        save_buildings()
+    # Optional quick-update examples:
+    # update_row("Headquarters", "hq_level")
+    # update_row("Wall", "wall")
+
 
 # -------------------------------
 # DASHBOARD PAGE (compact teams + Buildings with robust % gradients)
 # -------------------------------
 else:
     heroes = load_heroes()
+    
+    # Ensure Dashboard sees saved building values even if opened first
+    def _dash_bootstrap_from_kv():
+        if st.session_state.get("_kv_bootstrap"):
+            return
+        try:
+            for k, v in kv_get_all().items():
+                if k.startswith("buildings_"):
+                    st.session_state[k] = v
+        finally:
+            st.session_state["_kv_bootstrap"] = True
+
+    _dash_bootstrap_from_kv()
 
     # Load persisted settings
     settings = load_settings()
