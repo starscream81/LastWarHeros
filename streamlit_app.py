@@ -445,12 +445,12 @@ elif page == "Buildings":
 
 
 # -------------------------------
-# DASHBOARD PAGE (compact teams; fixed %; no stray lines)
+# DASHBOARD PAGE (complete rebuild, compact teams, working % gradients)
 # -------------------------------
 else:
     heroes = load_heroes()
 
-    # Load persisted settings for base & team power (teams 1–3)
+    # Load persisted settings
     settings = load_settings()
     for key, default in [
         ("base_level_str", settings.get("base_level", "")),
@@ -461,7 +461,7 @@ else:
         if key not in st.session_state:
             st.session_state[key] = default or ""
 
-    # Header layout
+    # Layout
     img_col, hdr_col = st.columns([1, 7])
     with img_col:
         st.image("frog.png", use_column_width=False, width=320)
@@ -469,7 +469,6 @@ else:
     with hdr_col:
         st.title("Shōckwave")
 
-        # Base Level & Total Hero Power directly under title
         base_col, total_col, _sp = st.columns([1, 2, 4])
         with base_col:
             bl = st.text_input(
@@ -487,9 +486,8 @@ else:
             total_power = 0 if heroes.empty else pd.to_numeric(heroes.get("power"), errors="coerce").fillna(0).sum()
             st.text_input("Total Hero Power", value=f"{int(total_power):,}", disabled=True, key="total_power")
 
-    # --------- Teams (compact, no separators) ----------
+    # --------- Teams (compact) ----------
     def render_team_row(team_num: int):
-        # tight layout: bold label instead of h3 to reduce spacing
         row_cols = st.columns([1.0, 1.0, 1.0, 7.0])
         with row_cols[0]:
             st.markdown(f"**Team {team_num}**")
@@ -509,13 +507,11 @@ else:
     render_team_row(2)
     render_team_row(3)
 
-    # Single line separating Teams and Buildings
     st.markdown("---")
 
-    # --------- Buildings summary section ----------
+    # --------- Buildings Section ----------
     st.subheader("Buildings")
 
-    # Helpers to read Buildings inputs
     def _get_level_raw(key: str) -> str:
         return str(st.session_state.get(f"buildings_{key}", "") or "").strip()
 
@@ -523,33 +519,26 @@ else:
         v = _get_level_raw(key)
         return int(v) if v.isdigit() else 0
 
-# Robust HQ: try several sources and cache
-candidates = [
-    st.session_state.get("base_level_str", ""),
-    settings.get("base_level", ""),
-    st.session_state.get("buildings_hq_level", ""),
-]
-bl = ""
-for c in candidates:
-    s = str(c).strip()
-    if s.isdigit():
-        bl = s
-        break
+    # Determine HQ level robustly
+    candidates = [
+        st.session_state.get("base_level_str", ""),
+        settings.get("base_level", ""),
+        st.session_state.get("buildings_hq_level", ""),
+    ]
+    HQ = 0
+    for c in candidates:
+        s = str(c).strip()
+        if s.isdigit():
+            HQ = int(s)
+            break
+    HQ = max(0, min(999, HQ))
+    st.session_state["cached_HQ"] = HQ
 
-HQ = int(bl) if bl else int(st.session_state.get("cached_HQ", 0))
-HQ = max(0, min(999, HQ))
-st.session_state["cached_HQ"] = HQ
-
-# Optional nudge so you know why % might be blank
-if HQ == 0:
-    st.info("Enter a Base Level at the top to enable building percentages.")
-
-    # Formatting
     def fmt_level(n: int) -> str:
         return "" if n <= 0 else str(n)
 
-    # Gradient percent box (0 → red, 100 → green)
-    def percent_box(value_pct: str) -> None:
+    # Gradient percent box
+    def percent_box(value_pct: str):
         if not value_pct:
             st.markdown("&nbsp;", unsafe_allow_html=True)
             return
@@ -557,7 +546,7 @@ if HQ == 0:
             p = int(value_pct.replace("%", ""))
         except Exception:
             p = 0
-        p = max(0, min(150, p))  # allow slight overflow shading
+        p = max(0, min(150, p))
         r = int(255 * max(0, (100 - p)) / 100)
         g = int(255 * min(100, p) / 100)
         st.markdown(
@@ -566,23 +555,21 @@ if HQ == 0:
             unsafe_allow_html=True,
         )
 
-    # Grouped % = (sum of levels) / HQ
+    # Percent calculations
     def pct_of_hq(levels: list[int]) -> str:
         vals = [v for v in levels if v > 0]
         if HQ <= 0 or not vals:
             return ""
-        total = sum(vals)
-        pct = round((total / HQ) * 100)
+        pct = round((sum(vals) / HQ) * 100)
         return f"{max(0, min(150, pct))}%"
 
-    # Single % = level / HQ
     def pct_single(level: int) -> str:
         if HQ <= 0 or level <= 0:
             return ""
         pct = round((level / HQ) * 100)
         return f"{max(0, min(150, pct))}%"
 
-    # Row helpers (no headers)
+    # Layout helpers
     def row_pair(label1, val1, label2, val2):
         c1, c2, c3, c4 = st.columns([1.2, 0.8, 1.2, 0.8])
         with c1: st.markdown(f"**{label1}**")
@@ -592,7 +579,7 @@ if HQ == 0:
 
     def row_pair_pct(label1, pct1, label2=None, pct2=None):
         if label2 is None:
-            a, b, _sp = st.columns([1.2, 0.8, 2.4])
+            a, b, _ = st.columns([1.2, 0.8, 2.4])
             with a: st.markdown(f"**{label1}**")
             with b: percent_box(pct1)
         else:
@@ -602,19 +589,18 @@ if HQ == 0:
             with c: st.markdown(f"**{label2}**")
             with d: percent_box(pct2 or "")
 
-    # Highest values (top table)
+    # Top Building Levels
     wall = get_level("wall")
     tc_high = max(get_level("tech_center_1"), get_level("tech_center_2"), get_level("tech_center_3"))
     tam_high = max(get_level("tank_center"), get_level("aircraft_center"), get_level("missile_center"))
     barracks_high = max(get_level("barracks_1"), get_level("barracks_2"), get_level("barracks_3"), get_level("barracks_4"))
-    hospital_high  = max(get_level("hospital_1"), get_level("hospital_2"), get_level("hospital_3"), get_level("hospital_4"))
-    training_high  = max(get_level("training_grounds_1"), get_level("training_grounds_2"), get_level("training_grounds_3"), get_level("training_grounds_4"))
+    hospital_high = max(get_level("hospital_1"), get_level("hospital_2"), get_level("hospital_3"), get_level("hospital_4"))
+    training_high = max(get_level("training_grounds_1"), get_level("training_grounds_2"), get_level("training_grounds_3"), get_level("training_grounds_4"))
 
     row_pair("Wall:", fmt_level(wall), "Barracks:", fmt_level(barracks_high))
     row_pair("Tech Center:", fmt_level(tc_high), "Hospital:", fmt_level(hospital_high))
     row_pair("Tank/Air/Missile Center:", fmt_level(tam_high), "Training Grounds:", fmt_level(training_high))
 
-    # Spacer
     st.write("")
 
     # Percent table
@@ -645,7 +631,7 @@ if HQ == 0:
     pct_tav  = pct_single(get_level("tavern"))
     pct_tac  = pct_single(get_level("tactical_institute"))
 
-    # Render rows
+    # Render rows (with gradient %)
     row_pair_pct("Tech Center:", pct_tc, "Oil Well", pct_oil)
     row_pair_pct("Tank/Air/Missile:", pct_tam, "Coin Vault", pct_coin)
     row_pair_pct("Barracks:", pct_bar, "Iron Warehouse", pct_iwh)
