@@ -445,12 +445,12 @@ elif page == "Buildings":
 
 
 # -------------------------------
-# DASHBOARD PAGE (Teams compact; extra Building rows)
+# DASHBOARD PAGE (compact teams; fixed %; no stray lines)
 # -------------------------------
 else:
     heroes = load_heroes()
 
-    # Load persisted settings
+    # Load persisted settings for base & team power (teams 1–3)
     settings = load_settings()
     for key, default in [
         ("base_level_str", settings.get("base_level", "")),
@@ -489,9 +489,10 @@ else:
 
     # --------- Teams (compact, no separators) ----------
     def render_team_row(team_num: int):
-        row_cols = st.columns([1.2, 1.0, 1.0, 6.8])
+        # tight layout: bold label instead of h3 to reduce spacing
+        row_cols = st.columns([1.0, 1.0, 1.0, 7.0])
         with row_cols[0]:
-            st.markdown(f"### Team {team_num}")
+            st.markdown(f"**Team {team_num}**")
         with row_cols[1]:
             st.selectbox("Type", ["Tank", "Air", "Missile", "Mixed"], key=f"team_type_{team_num}")
         with row_cols[2]:
@@ -514,7 +515,7 @@ else:
     # --------- Buildings summary section ----------
     st.subheader("Buildings")
 
-    # Helpers
+    # Helpers to read Buildings inputs
     def _get_level_raw(key: str) -> str:
         return str(st.session_state.get(f"buildings_{key}", "") or "").strip()
 
@@ -522,16 +523,19 @@ else:
         v = _get_level_raw(key)
         return int(v) if v.isdigit() else 0
 
-    bl = (st.session_state.get("base_level_str") or "").strip()
+    # Robust HQ: prefer session, fallback to settings
+    bl = (st.session_state.get("base_level_str") or settings.get("base_level") or "").strip()
     try:
         HQ = int(bl) if bl.isdigit() else 0
     except Exception:
         HQ = 0
     HQ = max(0, min(999, HQ))
 
+    # Formatting
     def fmt_level(n: int) -> str:
         return "" if n <= 0 else str(n)
 
+    # Gradient percent box (0 → red, 100 → green)
     def percent_box(value_pct: str) -> None:
         if not value_pct:
             st.markdown("&nbsp;", unsafe_allow_html=True)
@@ -542,92 +546,95 @@ else:
             p = 0
         p = max(0, min(100, p))
         r = int(255 * (100 - p) / 100)
-        g = int(255 * (p) / 100)
-        txt = f"<div style='display:inline-block;padding:4px 8px;border-radius:6px;background:rgb({r},{g},0);color:white;font-weight:600;text-align:center;min-width:70px'>{value_pct}</div>"
-        st.markdown(txt, unsafe_allow_html=True)
+        g = int(255 * p / 100)
+        st.markdown(
+            f"<div style='display:inline-block;padding:4px 8px;border-radius:6px;"
+            f"background:rgb({r},{g},0);color:white;font-weight:600;text-align:center;min-width:70px'>{value_pct}</div>",
+            unsafe_allow_html=True,
+        )
 
+    # Grouped % = (sum of levels) / HQ
     def pct_of_hq(levels: list[int]) -> str:
         vals = [v for v in levels if v > 0]
         if HQ <= 0 or not vals:
             return ""
-        avg = sum(vals) / len(vals)
-        pct = round((avg / HQ) * 100)
-        pct = max(0, min(100, pct))
-        return f"{pct}%"
+        total = sum(vals)
+        pct = round((total / HQ) * 100)
+        return f"{max(0, min(100, pct))}%"
 
+    # Single % = level/HQ
     def pct_single(level: int) -> str:
         if HQ <= 0 or level <= 0:
             return ""
         pct = round((level / HQ) * 100)
-        pct = max(0, min(100, pct))
-        return f"{pct}%"
+        return f"{max(0, min(100, pct))}%"
 
+    # Row helpers (no headers)
     def row_pair(label1, val1, label2, val2):
         c1, c2, c3, c4 = st.columns([1.2, 0.8, 1.2, 0.8])
-        with c1:
-            st.markdown(f"**{label1}**")
-        with c2:
-            st.markdown(val1 if val1 else "&nbsp;", unsafe_allow_html=True)
-        with c3:
-            st.markdown(f"**{label2}**")
-        with c4:
-            st.markdown(val2 if val2 else "&nbsp;", unsafe_allow_html=True)
+        with c1: st.markdown(f"**{label1}**")
+        with c2: st.markdown(val1 if val1 else "&nbsp;", unsafe_allow_html=True)
+        with c3: st.markdown(f"**{label2}**")
+        with c4: st.markdown(val2 if val2 else "&nbsp;", unsafe_allow_html=True)
 
-    def row_pair_pct(label1, pct1, label2, pct2):
-        a, b, c, d = st.columns([1.2, 0.8, 1.2, 0.8])
-        with a:
-            st.markdown(f"**{label1}**")
-        with b:
-            percent_box(pct1)
-        with c:
-            st.markdown(f"**{label2}**")
-        with d:
-            percent_box(pct2)
+    def row_pair_pct(label1, pct1, label2=None, pct2=None):
+        # If label2/pct2 omitted, render a single left-side row (prevents stray lines)
+        if label2 is None:
+            a, b, _sp = st.columns([1.2, 0.8, 2.4])
+            with a: st.markdown(f"**{label1}**")
+            with b: percent_box(pct1)
+        else:
+            a, b, c, d = st.columns([1.2, 0.8, 1.2, 0.8])
+            with a: st.markdown(f"**{label1}**")
+            with b: percent_box(pct1)
+            with c: st.markdown(f"**{label2}**")
+            with d: percent_box(pct2 or "")
 
-    # Highest levels
+    # Highest values (top table)
     wall = get_level("wall")
     tc_high = max(get_level("tech_center_1"), get_level("tech_center_2"), get_level("tech_center_3"))
     tam_high = max(get_level("tank_center"), get_level("aircraft_center"), get_level("missile_center"))
     barracks_high = max(get_level("barracks_1"), get_level("barracks_2"), get_level("barracks_3"), get_level("barracks_4"))
-    hospital_high = max(get_level("hospital_1"), get_level("hospital_2"), get_level("hospital_3"), get_level("hospital_4"))
-    training_high = max(get_level("training_grounds_1"), get_level("training_grounds_2"), get_level("training_grounds_3"), get_level("training_grounds_4"))
+    hospital_high  = max(get_level("hospital_1"), get_level("hospital_2"), get_level("hospital_3"), get_level("hospital_4"))
+    training_high  = max(get_level("training_grounds_1"), get_level("training_grounds_2"), get_level("training_grounds_3"), get_level("training_grounds_4"))
 
-    # Top table
     row_pair("Wall:", fmt_level(wall), "Barracks:", fmt_level(barracks_high))
     row_pair("Tech Center:", fmt_level(tc_high), "Hospital:", fmt_level(hospital_high))
     row_pair("Tank/Air/Missile Center:", fmt_level(tam_high), "Training Grounds:", fmt_level(training_high))
-    st.markdown("&nbsp;", unsafe_allow_html=True)
 
-    # Percent table
-    pct_tc = pct_of_hq([get_level("tech_center_1"), get_level("tech_center_2"), get_level("tech_center_3")])
-    pct_tam = pct_of_hq([get_level("tank_center"), get_level("aircraft_center"), get_level("missile_center")])
-    pct_bar = pct_of_hq([get_level("barracks_1"), get_level("barracks_2"), get_level("barracks_3"), get_level("barracks_4")])
-    pct_hos = pct_of_hq([get_level("hospital_1"), get_level("hospital_2"), get_level("hospital_3"), get_level("hospital_4")])
-    pct_trn = pct_of_hq([get_level("training_grounds_1"), get_level("training_grounds_2"), get_level("training_grounds_3"), get_level("training_grounds_4")])
-    pct_emg = pct_single(get_level("emergency_center"))
-    pct_sq = pct_of_hq([get_level("squad_1"), get_level("squad_2"), get_level("squad_3"), get_level("squad_4")])
-    pct_alt = pct_single(get_level("alert_tower"))
-    pct_rcn = pct_of_hq([get_level("recon_plane_1"), get_level("recon_plane_2"), get_level("recon_plane_3")])
+    # Small spacer (no blank lines that draw rules)
+    st.write("")
 
-    # Newly added four
-    pct_hub = pct_single(get_level("alliance_support_hub"))
-    pct_bld = pct_single(get_level("builders_hut"))
-    pct_tav = pct_single(get_level("tavern"))
-    pct_tac = pct_single(get_level("tactical_institute"))
+    # Percent table (with gradient)
+    pct_tc   = pct_of_hq([get_level("tech_center_1"), get_level("tech_center_2"), get_level("tech_center_3")])
+    pct_tam  = pct_of_hq([get_level("tank_center"), get_level("aircraft_center"), get_level("missile_center")])
+    pct_bar  = pct_of_hq([get_level("barracks_1"), get_level("barracks_2"), get_level("barracks_3"), get_level("barracks_4")])
+    pct_hos  = pct_of_hq([get_level("hospital_1"), get_level("hospital_2"), get_level("hospital_3"), get_level("hospital_4")])
+    pct_trn  = pct_of_hq([get_level("training_grounds_1"), get_level("training_grounds_2"), get_level("training_grounds_3"), get_level("training_grounds_4")])
+    pct_emg  = pct_single(get_level("emergency_center"))
+    pct_sq   = pct_of_hq([get_level("squad_1"), get_level("squad_2"), get_level("squad_3"), get_level("squad_4")])
+    pct_alt  = pct_single(get_level("alert_tower"))
+    pct_rcn  = pct_of_hq([get_level("recon_plane_1"), get_level("recon_plane_2"), get_level("recon_plane_3")])
 
-    # Right-side resource/support lines (unchanged)
-    pct_oil = pct_of_hq([get_level("oil_well_1"), get_level("oil_well_2"), get_level("oil_well_3"), get_level("oil_well_4"), get_level("oil_well_5")])
+    pct_oil  = pct_of_hq([get_level("oil_well_1"), get_level("oil_well_2"), get_level("oil_well_3"), get_level("oil_well_4"), get_level("oil_well_5")])
     pct_coin = pct_single(get_level("coin_vault"))
-    pct_iwh = pct_single(get_level("iron_warehouse"))
-    pct_fwh = pct_single(get_level("food_warehouse"))
+    pct_iwh  = pct_single(get_level("iron_warehouse"))
+    pct_fwh  = pct_single(get_level("food_warehouse"))
     pct_gold = pct_of_hq([get_level("gold_mine_1"), get_level("gold_mine_2"), get_level("gold_mine_3"), get_level("gold_mine_4"), get_level("gold_mine_5")])
     pct_iron = pct_of_hq([get_level("iron_mine_1"), get_level("iron_mine_2"), get_level("iron_mine_3"), get_level("iron_mine_4"), get_level("iron_mine_5")])
     pct_farm = pct_of_hq([get_level("farmland_1"), get_level("farmland_2"), get_level("farmland_3"), get_level("farmland_4"), get_level("farmland_5")])
     pct_smel = pct_of_hq([get_level("smelter_1"), get_level("smelter_2"), get_level("smelter_3"), get_level("smelter_4"), get_level("smelter_5")])
-    pct_tbase = pct_of_hq([get_level("traning_base_1"), get_level("traning_base_2"), get_level("traning_base_3"), get_level("traning_base_4"), get_level("traning_base_5")])
-    pct_mw = pct_of_hq([get_level("material_workshop_1"), get_level("material_workshop_2"), get_level("material_workshop_3"), get_level("material_workshop_4"), get_level("material_workshop_5")])
+    pct_tbase= pct_of_hq([get_level("traning_base_1"), get_level("traning_base_2"), get_level("traning_base_3"), get_level("traning_base_4"), get_level("traning_base_5")])
+    pct_mw   = pct_of_hq([get_level("material_workshop_1"), get_level("material_workshop_2"), get_level("material_workshop_3"),
+                           get_level("material_workshop_4"), get_level("material_workshop_5")])
 
-    # Render rows
+    # Newly added four single-left rows
+    pct_hub  = pct_single(get_level("alliance_support_hub"))
+    pct_bld  = pct_single(get_level("builders_hut"))
+    pct_tav  = pct_single(get_level("tavern"))
+    pct_tac  = pct_single(get_level("tactical_institute"))
+
+    # Render rows (no blank right cells; no stray lines)
     row_pair_pct("Tech Center:", pct_tc, "Oil Well", pct_oil)
     row_pair_pct("Tank/Air/Missile:", pct_tam, "Coin Vault", pct_coin)
     row_pair_pct("Barracks:", pct_bar, "Iron Warehouse", pct_iwh)
@@ -638,8 +645,6 @@ else:
     row_pair_pct("Alert Tower:", pct_alt, "Smelter", pct_smel)
     row_pair_pct("Recon Plane:", pct_rcn, "Training Base", pct_tbase)
     row_pair_pct("Alliance Hub:", pct_hub, "Material Workshop", pct_mw)
-    row_pair_pct("Builder's Hut:", pct_bld, "", "")
-    row_pair_pct("Tavern:", pct_tav, "", "")
-    row_pair_pct("Tactical Institute:", pct_tac, "", "")
-
-
+    row_pair_pct("Builder's Hut:", pct_bld)   # single row left
+    row_pair_pct("Tavern:", pct_tav)          # single row left
+    row_pair_pct("Tactical Institute:", pct_tac)  # single row left
