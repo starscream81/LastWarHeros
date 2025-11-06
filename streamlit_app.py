@@ -533,10 +533,11 @@ else:
     HQ = max(0, min(999, HQ))
     st.session_state["cached_HQ"] = HQ  # cache for reruns
 
-    # Optional debug hint – remove later if desired
-    # st.caption(f"Detected HQ: {HQ}")
+    # ---------- Helpers ensure they're defined before use ----------
+    def fmt_level(n: int) -> str:
+        return "" if n <= 0 else str(n)
 
-    # Gradient percent box
+    # Gradient percent box (0 → red, 100 → green)
     def percent_box(value_pct: str):
         if not value_pct:
             st.markdown("&nbsp;", unsafe_allow_html=True)
@@ -554,7 +555,7 @@ else:
             unsafe_allow_html=True,
         )
 
-    # Percent calculations
+    # Grouped % = sum(levels) / HQ
     def pct_of_hq(levels: list[int]) -> str:
         vals = [v for v in levels if v > 0]
         if HQ <= 0 or not vals:
@@ -562,13 +563,14 @@ else:
         pct = round((sum(vals) / HQ) * 100)
         return f"{max(0, min(150, pct))}%"
 
+    # Single % = level / HQ
     def pct_single(level: int) -> str:
         if HQ <= 0 or level <= 0:
             return ""
         pct = round((level / HQ) * 100)
         return f"{max(0, min(150, pct))}%"
 
-    # Layout helpers
+    # Row helpers (no headers)
     def row_pair(label1, val1, label2, val2):
         c1, c2, c3, c4 = st.columns([1.2, 0.8, 1.2, 0.8])
         with c1: st.markdown(f"**{label1}**")
@@ -587,6 +589,7 @@ else:
             with b: percent_box(pct1)
             with c: st.markdown(f"**{label2}**")
             with d: percent_box(pct2 or "")
+
 
     # Top Building Levels
     wall = get_level("wall")
