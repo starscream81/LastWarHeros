@@ -263,29 +263,34 @@ elif page == "Add / Update Hero":
                 st.error(f"Failed to save: {e}")
 
 # -------------------------------
-# DASHBOARD (data-connected, compact header + table under team header)
+# DASHBOARD (compact header; inline Base Level & Total; tight centered tables)
 # -------------------------------
 else:
     heroes = load_heroes()
 
-    # Header area with image and title
-    img_col, hdr_col = st.columns([1, 5])
+    # Header row: image left, everything else right
+    img_col, hdr_col = st.columns([1, 6])
     with img_col:
         st.image("frog.png", use_column_width=False, width=320)
 
     with hdr_col:
-        # Title + Base Level (2-digit) on same row
-        tcol, lvlcol = st.columns([5, 1])
-        with tcol:
+        # Title, Base Level, Total Power all on ONE line
+        title_col, lvl_col, tot_col = st.columns([5, 1, 2])
+        with title_col:
             st.title("Shōckwave")
-        with lvlcol:
-            base_level = st.number_input("Base Level", min_value=0, max_value=99, step=1, format="%d", key="base_level")
-
-        # Total Hero Power directly under title, constrained to a narrow column
-        total_power = pd.to_numeric(heroes.get("power"), errors="coerce").fillna(0).sum() if not heroes.empty else 0
-        _spacer, powcol = st.columns([4, 2])  # small column keeps input compact
-        with powcol:
-            st.text_input("Total Hero Power", value=f"{int(total_power):,}", disabled=True, key="total_power")
+        with lvl_col:
+            base_level = st.number_input(
+                "Base Level", min_value=0, max_value=99, step=1, format="%d", key="base_level"
+            )
+        with tot_col:
+            total_power = 0 if heroes.empty else pd.to_numeric(heroes.get("power"), errors="coerce").fillna(0).sum()
+            # compact box: fits up to 13 digits with commas
+            st.text_input(
+                "Total Hero Power",
+                value=f"{int(total_power):,}",
+                disabled=True,
+                key="total_power",
+            )
 
     if heroes.empty:
         st.info("No hero data yet. Add heroes first in 'Add / Update Hero'.")
@@ -294,16 +299,14 @@ else:
     def render_team_section(team_num: int):
         st.markdown("---")
 
-        # Header line: Team X on left, Type and Power to the right (same line)
+        # Header line: Team X | Type | Power (same line)
         head, typecol, pcol = st.columns([2, 1, 1])
-
         with head:
             st.markdown(f"### Team {team_num}")
-
         with typecol:
-            st.selectbox("Type", ["Tank","Air","Missile","Mixed"], key=f"team_type_{team_num}")
+            st.selectbox("Type", ["Tank", "Air", "Missile", "Mixed"], key=f"team_type_{team_num}")
 
-        # Filter team heroes and compute team power
+        # Filter this team's heroes, sort by power
         team_df = heroes[heroes.get("team") == str(team_num)].copy()
         team_df["power"] = pd.to_numeric(team_df.get("power"), errors="coerce").fillna(0)
         team_df["level"] = pd.to_numeric(team_df.get("level"), errors="coerce").fillna(0)
@@ -313,11 +316,12 @@ else:
         with pcol:
             st.text_input("Power", value=f"{team_power_sum:,}", disabled=True, key=f"team_power_{team_num}")
 
-        # Table UNDER the header line (full width), compact columns, hidden index
-        top5 = team_df[["name","level","power"]].head(5).copy()
+        # Build top 5 table with only Name, Level, Power
+        top5 = team_df[["name", "level", "power"]].head(5).copy()
         while len(top5) < 5:
-            top5 = pd.concat([top5, pd.DataFrame([{"name":"","level":"","power":""}])], ignore_index=True)
+            top5 = pd.concat([top5, pd.DataFrame([{"name": "", "level": "", "power": ""}])], ignore_index=True)
 
+        # Rename and drop index, then compute tight column widths
         tdisp = top5.rename(columns={"name": "Name", "level": "Level", "power": "Power"}).reset_index(drop=True)
 
         def fmt_int(x):
@@ -328,17 +332,40 @@ else:
             except Exception:
                 return x
 
+        # Compute approximate widths per column based on longest rendered value
+        def max_len(series, is_numeric=False):
+            if is_numeric:
+                # consider comma formatting
+                s = series.apply(fmt_int)
+            else:
+                s = series.astype(str)
+            return max((len(v) for v in s.fillna("").tolist()), default=0)
+
+        name_w = max_len(tdisp["Name"], is_numeric=False)
+        level_w = max_len(tdisp["Level"], is_numeric=True)
+        power_w = max_len(tdisp["Power"], is_numeric=True)
+
+        # Convert char lengths to px with a little padding; clamp to sensible ranges
+        def px(chars, base_pad=18, min_px=80, max_px=260):
+            return f"{min(max(min_px, chars * 8 + base_pad), max_px)}px"
+
+        name_width  = px(name_w, base_pad=26, min_px=120, max_px=260)
+        level_width = px(level_w, base_pad=20, min_px=80,  max_px=140)
+        power_width = px(power_w, base_pad=20, min_px=100, max_px=180)
+
+        # Styled, centered headers and cells; hidden index; tight widths
         tstyled = (
             tdisp.style
             .format({"Level": fmt_int, "Power": fmt_int})
             .hide(axis="index")
             .set_table_styles([
-                {"selector": "th", "props": [("text-align", "center"), ("width", "80px"), ("padding", "4px 6px")]},
-                {"selector": "td", "props": [("text-align", "center"), ("width", "80px"), ("padding", "4px 6px")]},
+                {"selector": "th", "props": [("text-align", "center"), ("padding", "4px 6px")]},
+                {"selector": "td", "props": [("text-align", "center"), ("padding", "4px 6px")]},
             ])
         )
-        # Name column left and ~140px
-        tstyled = tstyled.set_properties(subset=["Name"], **{"text-align": "left", "width": "140px"})
+        tstyled = tstyled.set_properties(subset=["Name"], **{"width": name_width})
+        tstyled = tstyled.set_properties(subset=["Level"], **{"width": level_width})
+        tstyled = tstyled.set_properties(subset=["Power"], **{"width": power_width})
 
         st.write(tstyled, unsafe_allow_html=True)
 
@@ -346,4 +373,5 @@ else:
     render_team_section(2)
     render_team_section(3)
     render_team_section(4)
+
 
