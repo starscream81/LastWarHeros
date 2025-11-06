@@ -445,12 +445,12 @@ elif page == "Buildings":
 
 
 # -------------------------------
-# DASHBOARD PAGE (Teams 1–3 only; cleaned persistence)
+# DASHBOARD PAGE (Teams 1–3; Buildings summary + % with gradient)
 # -------------------------------
 else:
     heroes = load_heroes()
 
-    # Load persisted settings
+    # Load persisted settings for base & team power (teams 1–3)
     settings = load_settings()
     for key, default in [
         ("base_level_str", settings.get("base_level", "")),
@@ -492,7 +492,7 @@ else:
                 key="total_power",
             )
 
-    # Helper for team rows
+    # --------- Teams (1–3) simple rows ----------
     def render_team_row(team_num: int):
         st.markdown("---")
         row_cols = st.columns([1.2, 1.0, 1.0, 6.8])
@@ -510,7 +510,140 @@ else:
                 on_change=save_settings_from_state,
             )
 
-    # Only render 1–3
     render_team_row(1)
     render_team_row(2)
     render_team_row(3)
+
+    # --------- Buildings summary section ----------
+    st.markdown("---")
+    st.subheader("Buildings")
+
+    # Helpers to read Buildings inputs
+    def _get_level_raw(key: str) -> str:
+        return str(st.session_state.get(f"buildings_{key}", "") or "").strip()
+
+    def get_level(key: str) -> int:
+        v = _get_level_raw(key)
+        return int(v) if v.isdigit() else 0
+
+    # HQ level
+    bl = (st.session_state.get("base_level_str") or "").strip()
+    try:
+        HQ = int(bl) if bl.isdigit() else 0
+    except Exception:
+        HQ = 0
+    HQ = max(0, min(999, HQ))
+
+    # Format helpers
+    def fmt_level(n: int) -> str:
+        return "" if n <= 0 else str(n)
+
+    # Gradient percent box (0 → red, 100 → green)
+    def percent_box(value_pct: str) -> None:
+        if not value_pct:
+            st.markdown("&nbsp;", unsafe_allow_html=True)
+            return
+        try:
+            p = int(value_pct.replace("%",""))
+        except Exception:
+            p = 0
+        p = max(0, min(100, p))
+        r = int(255 * (100 - p) / 100)
+        g = int(255 * (p) / 100)
+        b = 0
+        txt = f"<div style='display:inline-block;padding:4px 10px;border-radius:6px;background:rgb({r},{g},{b});color:white;font-weight:600;text-align:center;min-width:70px'>{value_pct}</div>"
+        st.markdown(txt, unsafe_allow_html=True)
+
+    # For grouped lines: average(levels)/HQ as percent (whole number)
+    def pct_of_hq(levels: list[int]) -> str:
+        vals = [v for v in levels if v > 0]
+        if HQ <= 0 or len(vals) == 0:
+            return ""
+        avg = sum(vals) / len(vals)
+        pct = round((avg / HQ) * 100)
+        pct = max(0, min(100, pct))
+        return f"{pct}%"
+
+    # Singles: level/HQ
+    def pct_single(level: int) -> str:
+        if HQ <= 0 or level <= 0:
+            return ""
+        pct = round((level / HQ) * 100)
+        pct = max(0, min(100, pct))
+        return f"{pct}%"
+
+    # ---------- Top “no-header” table (two pairs per row) ----------
+    def row_pair(label1, val1, label2, val2):
+        c1, c2, c3, c4 = st.columns([1.2, 0.8, 1.2, 0.8])
+        with c1:
+            st.markdown(f"**{label1}**")
+        with c2:
+            st.markdown(val1 if val1 != "" else "&nbsp;", unsafe_allow_html=True)
+        with c3:
+            st.markdown(f"**{label2}**")
+        with c4:
+            st.markdown(val2 if val2 != "" else "&nbsp;", unsafe_allow_html=True)
+
+    # Compute highest values
+    wall = get_level("wall")
+    tc_high = max(get_level("tech_center_1"), get_level("tech_center_2"), get_level("tech_center_3"))
+    tam_high = max(get_level("tank_center"), get_level("aircraft_center"), get_level("missile_center"))
+    barracks_high = max(get_level("barracks_1"), get_level("barracks_2"), get_level("barracks_3"), get_level("barracks_4"))
+    hospital_high  = max(get_level("hospital_1"), get_level("hospital_2"), get_level("hospital_3"), get_level("hospital_4"))
+    training_high  = max(get_level("training_grounds_1"), get_level("training_grounds_2"), get_level("training_grounds_3"), get_level("training_grounds_4"))
+
+    row_pair("Wall:", fmt_level(wall), "Barracks:", fmt_level(barracks_high))
+    row_pair("Tech Center", fmt_level(tc_high), "Hospital:", fmt_level(hospital_high))
+    row_pair("Tank/Air/Missile Center:", fmt_level(tam_high), "Training Grounds:", fmt_level(training_high))
+
+    # Blank line
+    st.markdown("&nbsp;", unsafe_allow_html=True)
+
+    # ---------- Second “no-header” table with percentages + gradient on cols 2 & 4 ----------
+    def row_pair_pct(label1, pct1, label2, pct2):
+        a, b, c, d = st.columns([1.2, 0.8, 1.2, 0.8])
+        with a:
+            st.markdown(f"**{label1}**")
+        with b:
+            percent_box(pct1)
+        with c:
+            st.markdown(f"**{label2}**")
+        with d:
+            percent_box(pct2)
+
+    # Left side grouped lines
+    pct_tc   = pct_of_hq([get_level("tech_center_1"), get_level("tech_center_2"), get_level("tech_center_3")])
+    pct_tam  = pct_of_hq([get_level("tank_center"), get_level("aircraft_center"), get_level("missile_center")])
+    pct_bar  = pct_of_hq([get_level("barracks_1"), get_level("barracks_2"), get_level("barracks_3"), get_level("barracks_4")])
+    pct_hos  = pct_of_hq([get_level("hospital_1"), get_level("hospital_2"), get_level("hospital_3"), get_level("hospital_4")])
+    pct_trn  = pct_of_hq([get_level("training_grounds_1"), get_level("training_grounds_2"), get_level("training_grounds_3"), get_level("training_grounds_4")])
+    pct_emg  = pct_single(get_level("emergency_center"))
+    pct_sq   = pct_of_hq([get_level("squad_1"), get_level("squad_2"), get_level("squad_3"), get_level("squad_4")])
+    pct_alt  = pct_single(get_level("alert_tower"))
+    pct_rcn  = pct_of_hq([get_level("recon_plane_1"), get_level("recon_plane_2"), get_level("recon_plane_3")])
+
+    # Right side resources/support (using your Buildings keys)
+    pct_oil  = pct_of_hq([get_level("oil_well_1"), get_level("oil_well_2"), get_level("oil_well_3"), get_level("oil_well_4"), get_level("oil_well_5")])
+    pct_coin = pct_single(get_level("coin_vault"))
+    pct_iwh  = pct_single(get_level("iron_warehouse"))
+    pct_fwh  = pct_single(get_level("food_warehouse"))  # “Food Warehouse” in Buildings
+    pct_gold = pct_of_hq([get_level("gold_mine_1"), get_level("gold_mine_2"), get_level("gold_mine_3"), get_level("gold_mine_4"), get_level("gold_mine_5")])
+    pct_iron = pct_of_hq([get_level("iron_mine_1"), get_level("iron_mine_2"), get_level("iron_mine_3"), get_level("iron_mine_4"), get_level("iron_mine_5")])
+    pct_farm = pct_of_hq([get_level("farmland_1"), get_level("farmland_2"), get_level("farmland_3"), get_level("farmland_4"), get_level("farmland_5")])
+    pct_smel = pct_of_hq([get_level("smelter_1"), get_level("smelter_2"), get_level("smelter_3"), get_level("smelter_4"), get_level("smelter_5")])
+    pct_tbase= pct_of_hq([get_level("traning_base_1"), get_level("traning_base_2"), get_level("traning_base_3"), get_level("traning_base_4"), get_level("traning_base_5")])
+    pct_mw   = pct_of_hq([get_level("material_workshop_1"), get_level("material_workshop_2"), get_level("material_workshop_3"),
+                           get_level("material_workshop_4"), get_level("material_workshop_5")])
+
+    # Render rows (two-column pairs; no headers)
+    row_pair_pct("Tech Center:", pct_tc, "Oil Well", pct_oil)
+    row_pair_pct("Tank/Air/Missile:", pct_tam, "Coin Vault", pct_coin)
+    row_pair_pct("Barracks:", pct_bar, "Iron Warehouse", pct_iwh)
+    row_pair_pct("Hospital:", pct_hos, "Food Warehouse", pct_fwh)
+    row_pair_pct("Training Grounds:", pct_trn, "Gold Mine", pct_gold)
+    row_pair_pct("Emergency Center:", pct_emg, "Iron Mine", pct_iron)
+    row_pair_pct("Squads:", pct_sq, "Farmland", pct_farm)
+    row_pair_pct("Alert Tower:", pct_alt, "Smelter", pct_smel)
+    row_pair_pct("Recon Plane:", pct_rcn, "Training Base", pct_tbase)
+    row_pair_pct("", "", "Material Workshop", pct_mw)
+
