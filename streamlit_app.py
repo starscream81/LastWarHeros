@@ -523,13 +523,14 @@ else:
         v = _get_level_raw(key)
         return int(v) if v.isdigit() else 0
 
-    # Robust HQ: prefer session, fallback to settings
+    # Robust HQ: prefer cached session value; fallback to last known numeric
     bl = (st.session_state.get("base_level_str") or settings.get("base_level") or "").strip()
     try:
-        HQ = int(bl) if bl.isdigit() else 0
+        HQ = int(bl) if bl.isdigit() else int(st.session_state.get("cached_HQ", 0))
     except Exception:
-        HQ = 0
+        HQ = int(st.session_state.get("cached_HQ", 0))
     HQ = max(0, min(999, HQ))
+    st.session_state["cached_HQ"] = HQ  # persist across reruns
 
     # Formatting
     def fmt_level(n: int) -> str:
@@ -544,9 +545,9 @@ else:
             p = int(value_pct.replace("%", ""))
         except Exception:
             p = 0
-        p = max(0, min(100, p))
-        r = int(255 * (100 - p) / 100)
-        g = int(255 * p / 100)
+        p = max(0, min(150, p))  # allow slight overflow shading
+        r = int(255 * max(0, (100 - p)) / 100)
+        g = int(255 * min(100, p) / 100)
         st.markdown(
             f"<div style='display:inline-block;padding:4px 8px;border-radius:6px;"
             f"background:rgb({r},{g},0);color:white;font-weight:600;text-align:center;min-width:70px'>{value_pct}</div>",
@@ -560,14 +561,14 @@ else:
             return ""
         total = sum(vals)
         pct = round((total / HQ) * 100)
-        return f"{max(0, min(100, pct))}%"
+        return f"{max(0, min(150, pct))}%"
 
-    # Single % = level/HQ
+    # Single % = level / HQ
     def pct_single(level: int) -> str:
         if HQ <= 0 or level <= 0:
             return ""
         pct = round((level / HQ) * 100)
-        return f"{max(0, min(100, pct))}%"
+        return f"{max(0, min(150, pct))}%"
 
     # Row helpers (no headers)
     def row_pair(label1, val1, label2, val2):
@@ -578,7 +579,6 @@ else:
         with c4: st.markdown(val2 if val2 else "&nbsp;", unsafe_allow_html=True)
 
     def row_pair_pct(label1, pct1, label2=None, pct2=None):
-        # If label2/pct2 omitted, render a single left-side row (prevents stray lines)
         if label2 is None:
             a, b, _sp = st.columns([1.2, 0.8, 2.4])
             with a: st.markdown(f"**{label1}**")
@@ -602,10 +602,10 @@ else:
     row_pair("Tech Center:", fmt_level(tc_high), "Hospital:", fmt_level(hospital_high))
     row_pair("Tank/Air/Missile Center:", fmt_level(tam_high), "Training Grounds:", fmt_level(training_high))
 
-    # Small spacer (no blank lines that draw rules)
+    # Spacer
     st.write("")
 
-    # Percent table (with gradient)
+    # Percent table
     pct_tc   = pct_of_hq([get_level("tech_center_1"), get_level("tech_center_2"), get_level("tech_center_3")])
     pct_tam  = pct_of_hq([get_level("tank_center"), get_level("aircraft_center"), get_level("missile_center")])
     pct_bar  = pct_of_hq([get_level("barracks_1"), get_level("barracks_2"), get_level("barracks_3"), get_level("barracks_4")])
@@ -628,13 +628,12 @@ else:
     pct_mw   = pct_of_hq([get_level("material_workshop_1"), get_level("material_workshop_2"), get_level("material_workshop_3"),
                            get_level("material_workshop_4"), get_level("material_workshop_5")])
 
-    # Newly added four single-left rows
     pct_hub  = pct_single(get_level("alliance_support_hub"))
     pct_bld  = pct_single(get_level("builders_hut"))
     pct_tav  = pct_single(get_level("tavern"))
     pct_tac  = pct_single(get_level("tactical_institute"))
 
-    # Render rows (no blank right cells; no stray lines)
+    # Render rows
     row_pair_pct("Tech Center:", pct_tc, "Oil Well", pct_oil)
     row_pair_pct("Tank/Air/Missile:", pct_tam, "Coin Vault", pct_coin)
     row_pair_pct("Barracks:", pct_bar, "Iron Warehouse", pct_iwh)
@@ -645,6 +644,5 @@ else:
     row_pair_pct("Alert Tower:", pct_alt, "Smelter", pct_smel)
     row_pair_pct("Recon Plane:", pct_rcn, "Training Base", pct_tbase)
     row_pair_pct("Alliance Hub:", pct_hub, "Material Workshop", pct_mw)
-    row_pair_pct("Builder's Hut:", pct_bld)   # single row left
-    row_pair_pct("Tavern:", pct_tav)          # single row left
-    row_pair_pct("Tactical Institute:", pct_tac)  # single row left
+    row_pair_pct("Builder's Hut:", pct_bld, "Tactical Institute:", pct_tac)
+    row_pair_pct("Tavern:", pct_tav)
