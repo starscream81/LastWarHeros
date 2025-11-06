@@ -8,11 +8,30 @@ from datetime import datetime
 # ---------------------------------------------
 st.set_page_config(page_title="LastWarHeros Dashboard", page_icon="🛡️", layout="wide")
 
+import os
+import streamlit as st
+from supabase import create_client, Client
+
 @st.cache_resource(show_spinner=False)
 def get_supabase() -> Client:
-    url = st.secrets["supabase"]["url"]
-    key = st.secrets["supabase"]["anon_key"]
+    # Try Streamlit secrets first
+    url = None
+    key = None
+    if "supabase" in st.secrets:
+        sb_sec = st.secrets["supabase"]
+        url = sb_sec.get("url")
+        key = sb_sec.get("anon_key")
+
+    # Fallback to environment variables if needed
+    url = url or os.environ.get("SUPABASE_URL")
+    key = key or os.environ.get("SUPABASE_ANON_KEY")
+
+    if not url or not key:
+        st.error("❌ Missing Supabase credentials. Check your .streamlit/secrets.toml or environment variables.")
+        st.stop()
+
     return create_client(url, key)
+
 
 sb = get_supabase()
 
