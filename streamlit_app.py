@@ -111,40 +111,31 @@ def safe_int_format(x):
         return x
 
 # -------------------------------
-# UI nav with password gating
+# UI nav with password gating (includes Buildings)
 # -------------------------------
+APP_PASSWORD = "fuckoff"  # change if you want
 
-# Define your simple password here (you can change it anytime)
-APP_PASSWORD = "fuckoff"  # <- change to anything you like
-
-# Password box in sidebar
 st.sidebar.markdown("### 🔑 Access")
 entered_password = st.sidebar.text_input("Enter password", type="password")
 
-# Check authentication
 authenticated = entered_password == APP_PASSWORD
 if authenticated:
     st.session_state["auth"] = True
 elif "auth" not in st.session_state:
     st.session_state["auth"] = False
 
-# Determine which pages to show
 if st.session_state["auth"]:
-    nav_options = ["Dashboard", "Heroes", "Add / Update Hero"]
+    nav_options = ["Dashboard", "Buildings", "Heroes", "Add / Update Hero"]
 else:
     nav_options = ["Dashboard"]
 
-# Default page on load
 if "nav" not in st.session_state or st.session_state["nav"] not in nav_options:
     st.session_state["nav"] = "Dashboard"
 
 page = st.sidebar.radio("Navigate", nav_options, key="nav")
 
-# Optional: display status
-if not st.session_state["auth"]:
-    st.sidebar.caption("🔒 Heroes and editing locked until password entered.")
-else:
-    st.sidebar.caption("✅ Access granted")
+st.sidebar.caption("✅ Access granted" if st.session_state["auth"] else "🔒 Other pages locked until password entered.")
+
 
 
 # -------------------------------
@@ -316,6 +307,130 @@ elif page == "Add / Update Hero":
                 st.cache_data.clear()
             except Exception as e:
                 st.error(f"Failed to save: {e}")
+
+# -------------------------------
+# BUILDINGS PAGE
+# -------------------------------
+elif page == "Buildings":
+    st.title("🏗️ Buildings")
+
+    # pull HQ level from Dashboard (persisted or current session)
+    base_level_str = st.session_state.get("base_level_str", "") or ""
+    try:
+        hq_level = int(base_level_str) if base_level_str.isdigit() else 0
+    except Exception:
+        hq_level = 0
+    hq_level = max(0, min(99, hq_level))  # clamp for safety
+
+    def level_options(hq: int):
+        return [""] + [str(i) for i in range(1, hq + 1)]
+
+    # Define the list exactly as you wrote it
+    sections = [
+        ("Headquarters", "hq", False),
+        ("Wall", "wall", False),
+
+        ("Tech Centers:", None, True),
+        ("Tech Center 1", "tech_center_1", False),
+        ("Tech Center 2", "tech_center_2", False),
+        ("Tech Center 3", "tech_center_3", False),
+
+        ("Military Support:", None, True),
+        ("Tank Center", "tank_center", False),
+        ("Aircraft Center", "aircraft_center", False),
+        ("Missile Center", "missile_center", False),
+        ("Barracks 1", "barracks_1", False),
+        ("Barracks 2", "barracks_2", False),
+        ("Barracks 3", "barracks_3", False),
+        ("Barracks 4", "barracks_4", False),
+        ("Hospital 1", "hospital_1", False),
+        ("Hospital 2", "hospital_2", False),
+        ("Hospital 3", "hospital_3", False),
+        ("Hospital 4", "hospital_4", False),
+        ("Training Grounds 1", "training_grounds_1", False),
+        ("Training Grounds 2", "training_grounds_2", False),
+        ("Training Grounds 3", "training_grounds_3", False),
+        ("Training Grounds 4", "training_grounds_4", False),
+        ("Emergency Center", "emergency_center", False),
+        ("1st Squad", "squad_1", False),
+        ("2nd Squad", "squad_2", False),
+        ("3rd Squad", "squad_3", False),
+        ("4th Squad", "squad_4", False),
+        ("Alert Tower", "alert_tower", False),
+        ("Recon Plane 1", "recon_plane_1", False),
+        ("Recon Plane 2", "recon_plane_2", False),
+        ("Recon Plane 3", "recon_plane_3", False),
+
+        ("Resource Production:", None, True),
+        ("Coin Vault", "coin_vault", False),
+        ("Iron Warehouse", "iron_warehouse", False),
+        ("Food Warehouse", "food_warehouse", False),
+        ("Gold Mine 1", "gold_mine_1", False),
+        ("Gold Mine 2", "gold_mine_2", False),
+        ("Gold Mine 3", "gold_mine_3", False),
+        ("Gold Mine 4", "gold_mine_4", False),
+        ("Gold Mine 5", "gold_mine_5", False),
+        ("Iron Mine 1", "iron_mine_1", False),
+        ("Iron Mine 2", "iron_mine_2", False),
+        ("Iron Mine 3", "iron_mine_3", False),
+        ("Iron Mine 4", "iron_mine_4", False),
+        ("Iron Mine 5", "iron_mine_5", False),
+        ("Farmland 1", "farmland_1", False),
+        ("Farmland 2", "farmland_2", False),
+        ("Farmland 3", "farmland_3", False),
+        ("Farmland 4", "farmland_4", False),
+        ("Farmland 5", "farmland_5", False),
+        ("Smelter 1", "smelter_1", False),
+        ("Smelter 2", "smelter_2", False),
+        ("Smelter 3", "smelter_3", False),
+        ("Smelter 4", "smelter_4", False),
+        ("Smelter 5", "smelter_5", False),
+        ("Traning Base 1", "traning_base_1", False),
+        ("Traning Base 2", "traning_base_2", False),
+        ("Traning Base 3", "traning_base_3", False),
+        ("Traning Base 4", "traning_base_4", False),
+        ("Traning Base 5", "traning_base_5", False),
+        ("Material Workshop 1", "material_workshop_1", False),
+        ("Material Workshop 2", "material_workshop_2", False),
+        ("Material Workshop 3", "material_workshop_3", False),
+        ("Material Workshop 4", "material_workshop_4", False),
+        ("Material Workshop 5", "material_workshop_5", False),
+        ("Oil Well 1", "oil_well_1", False),
+        ("Oil Well 2", "oil_well_2", False),
+        ("Oil Well 3", "oil_well_3", False),
+        ("Oil Well 4", "oil_well_4", False),
+        ("Oil Well 5", "oil_well_5", False),
+
+        ("Support Buildings:", None, True),
+        ("Alliance Support Hub", "alliance_support_hub", False),
+        ("Builder's Hut", "builders_hut", False),
+        ("Tavern", "tavern", False),
+        ("Tactical Institute", "tactical_institute", False),
+        ("Drone Parts Workshop", "drone_parts_workshop", False),
+        ("Chip Lab", "chip_lab", False),
+        ("Component Factory", "component_factory", False),
+        ("Gear Factory", "gear_factory", False),
+    ]
+
+    # Render as rows: label on left, value on right; compact widths
+    for label, key, is_header in sections:
+        if is_header:
+            st.subheader(label)
+            continue
+
+        c1, c2 = st.columns([2.5, 1.0])
+
+        with c1:
+            st.markdown(label)
+
+        with c2:
+            if key == "hq":
+                # Headquarters equals Base Level; show as read-only
+                st.text_input("Level", value=str(hq_level) if hq_level > 0 else "", disabled=True, label_visibility="collapsed", key="buildings_hq_level")
+            else:
+                # dropdown: blank + 1..HQ level
+                opts = level_options(hq_level)
+                st.selectbox("Level", opts, index=0, key=f"buildings_{key}", label_visibility="collapsed")
 
 # -------------------------------
 # DASHBOARD (Teams 1–3 only; persistent Base Level & Power)
