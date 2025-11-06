@@ -340,6 +340,18 @@ elif page == "Buildings":
             st.success("✅ Buildings saved!", icon="💾")
         except Exception as e:
             st.error(f"Save failed: {e}")
+    # --- autosave support
+    if "autosave_buildings" not in st.session_state:
+        st.session_state["autosave_buildings"] = True  # default ON so you don't lose work
+
+    def _building_changed():
+        # autosave every change
+        if st.session_state.get("autosave_buildings"):
+            try:
+                save_buildings()
+            except Exception as e:
+                st.warning(f"Autosave failed: {e}")
+           
 
     # --- Robust building value reader (accepts 'buildings_{key}', 'building_{key}', or '{key}')
     def _read_building_raw(key: str) -> str:
@@ -359,7 +371,12 @@ elif page == "Buildings":
     def building_input(label: str, key: str, width: int = 60):
         ss_key = f"buildings_{key}"
         init_building_field(key, "")  # only sets once
-        st.text_input(label, key=ss_key, label_visibility="visible")
+        st.text_input(
+            label,
+            key=ss_key,
+            label_visibility="visible",
+            on_change=_building_changed,   # <— autosave on every edit
+        )
 
     # Numeric helpers
     def get_level(key: str) -> int:
