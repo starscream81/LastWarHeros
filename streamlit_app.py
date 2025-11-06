@@ -114,9 +114,14 @@ def safe_int_format(x):
 # UI nav
 # -------------------------------
 if "nav" not in st.session_state:
-    st.session_state["nav"] = "Heroes"
+    st.session_state["nav"] = "Dashboard"  # default page on load
 
-page = st.sidebar.radio("Navigate", ["Heroes", "Add / Update Hero", "Dashboard"], key="nav")
+page = st.sidebar.radio(
+    "Navigate",
+    ["Dashboard", "Heroes", "Add / Update Hero"],
+    key="nav"
+)
+
 
 # -------------------------------
 # HEROES PAGE
