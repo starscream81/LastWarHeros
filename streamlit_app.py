@@ -445,7 +445,7 @@ elif page == "Buildings":
 
 
 # -------------------------------
-# DASHBOARD PAGE (complete rebuild, compact teams, working % gradients)
+# DASHBOARD PAGE (compact teams + Buildings with robust % gradients)
 # -------------------------------
 else:
     heroes = load_heroes()
@@ -461,7 +461,7 @@ else:
         if key not in st.session_state:
             st.session_state[key] = default or ""
 
-    # Layout
+    # Header
     img_col, hdr_col = st.columns([1, 7])
     with img_col:
         st.image("frog.png", use_column_width=False, width=320)
@@ -512,13 +512,21 @@ else:
     # --------- Buildings Section ----------
     st.subheader("Buildings")
 
-    # -------- numeric helpers --------
+    # --- Robust building value reader (accepts 'buildings_{key}', 'building_{key}', or '{key}')
+    def _read_building_raw(key: str) -> str:
+        for k in (f"buildings_{key}", f"building_{key}", key):
+            v = st.session_state.get(k, None)
+            if v is not None and str(v).strip() != "":
+                return str(v)
+        return ""
+
+    # Numeric helpers
     def get_level(key: str) -> int:
-        raw = str(st.session_state.get(f"buildings_{key}", "") or "")
+        raw = _read_building_raw(key)
         digits = "".join(ch for ch in raw if ch.isdigit())
         return int(digits) if digits else 0
 
-    # Determine HQ level robustly (strip all non-digits) and mirror to buildings
+    # Determine HQ and mirror to Buildings state
     candidates = [
         st.session_state.get("base_level_str", ""),
         settings.get("base_level", ""),
@@ -534,10 +542,7 @@ else:
     st.session_state["cached_HQ"] = HQ
     st.session_state["buildings_hq_level"] = str(HQ) if HQ > 0 else st.session_state.get("buildings_hq_level", "")
 
-    # Debug hint (remove if you prefer)
-    st.caption(f"Detected HQ: {HQ}")
-
-    # -------- UI helpers (defined BEFORE use) --------
+    # UI helpers
     def fmt_level(n: int) -> str:
         return "" if n <= 0 else str(n)
 
@@ -559,20 +564,20 @@ else:
         )
 
     def pct_group(keys: list[str]) -> str:
-        # Consider row present if any textbox has any text (even "0")
-        any_filled = any(str(st.session_state.get(f"buildings_{k}", "") or "").strip() != "" for k in keys)
+        # Row is considered present if *any* textbox has any text (even "0")
+        any_filled = any(_read_building_raw(k) != "" for k in keys)
         if HQ <= 0 or not any_filled:
             return ""
         total = 0
         for k in keys:
-            raw = str(st.session_state.get(f"buildings_{k}", "") or "")
+            raw = _read_building_raw(k)
             digits = "".join(ch for ch in raw if ch.isdigit())
             total += int(digits) if digits else 0
         pct = round((total / HQ) * 100)
         return f"{max(0, min(150, pct))}%"
 
     def pct_single_key(key: str) -> str:
-        raw = str(st.session_state.get(f"buildings_{key}", "") or "").strip()
+        raw = _read_building_raw(key)
         if HQ <= 0 or raw == "":
             return ""
         digits = "".join(ch for ch in raw if ch.isdigit())
@@ -594,16 +599,22 @@ else:
     def row_pair_pct(label1, pct1, label2=None, pct2=None):
         if label2 is None:
             a, b, _ = st.columns([1.2, 0.8, 2.4])
-            with a: st.markdown(f"**{label1}**")
-            with b: percent_box(pct1)
+            with a:
+                st.markdown(f"**{label1}**")
+            with b:
+                percent_box(pct1)
         else:
             a, b, c, d = st.columns([1.2, 0.8, 1.2, 0.8])
-            with a: st.markdown(f"**{label1}**")
-            with b: percent_box(pct1)
-            with c: st.markdown(f"**{label2}**")
-            with d: percent_box(pct2 or "")
+            with a:
+                st.markdown(f"**{label1}**")
+            with b:
+                percent_box(pct1)
+            with c:
+                st.markdown(f"**{label2}**")
+            with d:
+                percent_box(pct2 or "")
 
-    # -------- Top Building Levels (left/right table 1) --------
+    # -------- Top Building Levels --------
     wall = get_level("wall")
     tc_high = max(get_level("tech_center_1"), get_level("tech_center_2"), get_level("tech_center_3"))
     tam_high = max(get_level("tank_center"), get_level("aircraft_center"), get_level("missile_center"))
@@ -617,7 +628,7 @@ else:
 
     st.write("")
 
-    # -------- Percent table (sum/HQ) --------
+    # -------- Percent table (sum ÷ HQ) --------
     pct_tc   = pct_group(["tech_center_1", "tech_center_2", "tech_center_3"])
     pct_tam  = pct_group(["tank_center", "aircraft_center", "missile_center"])
     pct_bar  = pct_group(["barracks_1", "barracks_2", "barracks_3", "barracks_4"])
