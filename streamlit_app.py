@@ -322,8 +322,9 @@ elif page == "Buildings":
         hq_level = 0
     hq_level = max(0, min(99, hq_level))  # clamp for safety
 
-    def level_options(hq: int):
-        return [""] + [str(i) for i in range(1, hq + 1)]
+def level_options(hq: int):
+    # blank first, then count down from HQ to 1
+    return [""] + [str(i) for i in range(hq, 0, -1)]
 
     # Define the list exactly as you wrote it
     sections = [
