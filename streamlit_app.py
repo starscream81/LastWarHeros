@@ -77,16 +77,24 @@ def upsert_hero_by_name(name: str, fields: Dict[str, Any]):
         sb.table("heroes").insert({"name": name, **fields}).execute()
         
 # --- Dashboard settings persistence (Supabase) ---
+# --- Dashboard settings persistence (Supabase) ---
 def load_settings() -> dict:
     try:
         data = sb.table("dashboard_settings").select("*").eq("id", 1).execute().data
         if data:
             return data[0]
-        # seed row if missing
-        sb.table("dashboard_settings").insert({"id": 1}).execute()
-        return {}
-    except Exception:
-        return {}
+        # seed row if missing (only 1..3)
+        sb.table("dashboard_settings").insert({
+            "id": 1,
+            "base_level": "",
+            "team1_power": "",
+            "team2_power": "",
+            "team3_power": ""
+        }).execute()
+        return {"id": 1, "base_level": "", "team1_power": "", "team2_power": "", "team3_power": ""}
+    except Exception as e:
+        st.warning(f"Load failed: {e}")
+        return {"id": 1, "base_level": "", "team1_power": "", "team2_power": "", "team3_power": ""}
 
 def save_settings_from_state():
     payload = {
@@ -94,8 +102,7 @@ def save_settings_from_state():
         "base_level": st.session_state.get("base_level_str", ""),
         "team1_power": st.session_state.get("team_power_1_manual", ""),
         "team2_power": st.session_state.get("team_power_2_manual", ""),
-        "team3_power": st.session_state.get("team_power_3_manual", ""),
-        "team4_power": st.session_state.get("team_power_4_manual", ""),
+        "team3_power": st.session_state.get("team_power_3_manual", "")
     }
     try:
         sb.table("dashboard_settings").upsert(payload).execute()
