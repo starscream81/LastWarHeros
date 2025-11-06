@@ -319,130 +319,137 @@ elif page == "Add / Update Hero":
 # BUILDINGS PAGE (text boxes instead of dropdowns)
 # -------------------------------
 elif page == "Buildings":
-    st.title("🏗️ Buildings")
+    st.subheader("Buildings")
 
-    # pull HQ level from Dashboard (persisted or current session)
-    base_level_str = st.session_state.get("base_level_str", "") or ""
-    try:
-        hq_level = int(base_level_str) if base_level_str.isdigit() else 0
-    except Exception:
-        hq_level = 0
-    hq_level = max(0, min(999, hq_level))  # clamp for safety
+    # ---------- Supabase persistence ----------
+    def load_buildings():
+        try:
+            res = sb.table("buildings_data").select("data").order("updated_at", desc=True).limit(1).execute()
+            if res.data and len(res.data) > 0:
+                return res.data[0]["data"]
+        except Exception as e:
+            st.warning(f"Failed to load buildings data: {e}")
+        return {}
 
-    # Define sections (same structure)
-    sections = [
-        ("Headquarters", "hq", False),
-        ("Wall", "wall", False),
+    def save_buildings():
+        try:
+            payload = {
+                "data": {k: v for k, v in st.session_state.items() if k.startswith("buildings_")}
+            }
+            sb.table("buildings_data").upsert(payload).execute()
+            st.success("✅ Buildings saved!", icon="💾")
+        except Exception as e:
+            st.error(f"Save failed: {e}")
 
-        ("Tech Centers:", None, True),
-        ("Tech Center 1", "tech_center_1", False),
-        ("Tech Center 2", "tech_center_2", False),
-        ("Tech Center 3", "tech_center_3", False),
+    # --- Robust building value reader (accepts 'buildings_{key}', 'building_{key}', or '{key}')
+    def _read_building_raw(key: str) -> str:
+        for k in (f"buildings_{key}", f"building_{key}", key):
+            v = st.session_state.get(k, None)
+            if v is not None and str(v).strip() != "":
+                return str(v)
+        return ""
 
-        ("Military Support:", None, True),
-        ("Tank Center", "tank_center", False),
-        ("Aircraft Center", "aircraft_center", False),
-        ("Missile Center", "missile_center", False),
-        ("Barracks 1", "barracks_1", False),
-        ("Barracks 2", "barracks_2", False),
-        ("Barracks 3", "barracks_3", False),
-        ("Barracks 4", "barracks_4", False),
-        ("Hospital 1", "hospital_1", False),
-        ("Hospital 2", "hospital_2", False),
-        ("Hospital 3", "hospital_3", False),
-        ("Hospital 4", "hospital_4", False),
-        ("Training Grounds 1", "training_grounds_1", False),
-        ("Training Grounds 2", "training_grounds_2", False),
-        ("Training Grounds 3", "training_grounds_3", False),
-        ("Training Grounds 4", "training_grounds_4", False),
-        ("Emergency Center", "emergency_center", False),
-        ("1st Squad", "squad_1", False),
-        ("2nd Squad", "squad_2", False),
-        ("3rd Squad", "squad_3", False),
-        ("4th Squad", "squad_4", False),
-        ("Alert Tower", "alert_tower", False),
-        ("Recon Plane 1", "recon_plane_1", False),
-        ("Recon Plane 2", "recon_plane_2", False),
-        ("Recon Plane 3", "recon_plane_3", False),
+    # 1) Initialize once
+    def init_building_field(key: str, default: str = "") -> None:
+        ss_key = f"buildings_{key}"
+        if ss_key not in st.session_state:
+            st.session_state[ss_key] = default
 
-        ("Resource Production:", None, True),
-        ("Coin Vault", "coin_vault", False),
-        ("Iron Warehouse", "iron_warehouse", False),
-        ("Food Warehouse", "food_warehouse", False),
-        ("Gold Mine 1", "gold_mine_1", False),
-        ("Gold Mine 2", "gold_mine_2", False),
-        ("Gold Mine 3", "gold_mine_3", False),
-        ("Gold Mine 4", "gold_mine_4", False),
-        ("Gold Mine 5", "gold_mine_5", False),
-        ("Iron Mine 1", "iron_mine_1", False),
-        ("Iron Mine 2", "iron_mine_2", False),
-        ("Iron Mine 3", "iron_mine_3", False),
-        ("Iron Mine 4", "iron_mine_4", False),
-        ("Iron Mine 5", "iron_mine_5", False),
-        ("Farmland 1", "farmland_1", False),
-        ("Farmland 2", "farmland_2", False),
-        ("Farmland 3", "farmland_3", False),
-        ("Farmland 4", "farmland_4", False),
-        ("Farmland 5", "farmland_5", False),
-        ("Smelter 1", "smelter_1", False),
-        ("Smelter 2", "smelter_2", False),
-        ("Smelter 3", "smelter_3", False),
-        ("Smelter 4", "smelter_4", False),
-        ("Smelter 5", "smelter_5", False),
-        ("Traning Base 1", "traning_base_1", False),
-        ("Traning Base 2", "traning_base_2", False),
-        ("Traning Base 3", "traning_base_3", False),
-        ("Traning Base 4", "traning_base_4", False),
-        ("Traning Base 5", "traning_base_5", False),
-        ("Material Workshop 1", "material_workshop_1", False),
-        ("Material Workshop 2", "material_workshop_2", False),
-        ("Material Workshop 3", "material_workshop_3", False),
-        ("Material Workshop 4", "material_workshop_4", False),
-        ("Material Workshop 5", "material_workshop_5", False),
-        ("Oil Well 1", "oil_well_1", False),
-        ("Oil Well 2", "oil_well_2", False),
-        ("Oil Well 3", "oil_well_3", False),
-        ("Oil Well 4", "oil_well_4", False),
-        ("Oil Well 5", "oil_well_5", False),
+    # 2) Render a text box that never wipes itself
+    def building_input(label: str, key: str, width: int = 60):
+        ss_key = f"buildings_{key}"
+        init_building_field(key, "")  # only sets once
+        st.text_input(label, key=ss_key, label_visibility="visible")
 
-        ("Support Buildings:", None, True),
-        ("Alliance Support Hub", "alliance_support_hub", False),
-        ("Builder's Hut", "builders_hut", False),
-        ("Tavern", "tavern", False),
-        ("Tactical Institute", "tactical_institute", False),
-        ("Drone Parts Workshop", "drone_parts_workshop", False),
-        ("Chip Lab", "chip_lab", False),
-        ("Component Factory", "component_factory", False),
-        ("Gear Factory", "gear_factory", False),
-    ]
+    # Numeric helpers
+    def get_level(key: str) -> int:
+        raw = _read_building_raw(key)
+        digits = "".join(ch for ch in raw if ch.isdigit())
+        return int(digits) if digits else 0
 
-    # Render rows
-    for label, key, is_header in sections:
-        if is_header:
-            st.subheader(label)
-            continue
+    # Load once at page start
+    if "buildings_loaded" not in st.session_state:
+        saved = load_buildings()
+        for k, v in saved.items():
+            st.session_state[k] = v
+        st.session_state["buildings_loaded"] = True
 
-        c1, c2 = st.columns([2.5, 1.0])
-        with c1:
-            st.markdown(label)
-        with c2:
-            if key == "hq":
-                st.text_input(
-                    "Level",
-                    value=str(hq_level) if hq_level > 0 else "",
-                    disabled=True,
-                    label_visibility="collapsed",
-                    key="buildings_hq_level",
-                )
-            else:
-                st.text_input(
-                    "Level",
-                    value=st.session_state.get(f"buildings_{key}", ""),
-                    max_chars=3,
-                    key=f"buildings_{key}",
-                    label_visibility="collapsed",
-                )
+    # -------- Input fields --------
+    col1, col2 = st.columns(2)
 
+    with col1:
+        building_input("Headquarters", "hq_level")
+        building_input("Wall", "wall")
+        building_input("Tech Center 1", "tech_center_1")
+        building_input("Tech Center 2", "tech_center_2")
+        building_input("Tech Center 3", "tech_center_3")
+        building_input("Tank Center", "tank_center")
+        building_input("Aircraft Center", "aircraft_center")
+        building_input("Missile Center", "missile_center")
+        building_input("Barracks 1", "barracks_1")
+        building_input("Barracks 2", "barracks_2")
+        building_input("Barracks 3", "barracks_3")
+        building_input("Barracks 4", "barracks_4")
+        building_input("Hospital 1", "hospital_1")
+        building_input("Hospital 2", "hospital_2")
+        building_input("Hospital 3", "hospital_3")
+        building_input("Hospital 4", "hospital_4")
+        building_input("Training Grounds 1", "training_grounds_1")
+        building_input("Training Grounds 2", "training_grounds_2")
+        building_input("Training Grounds 3", "training_grounds_3")
+        building_input("Training Grounds 4", "training_grounds_4")
+        building_input("Emergency Center", "emergency_center")
+        building_input("1st Squad", "squad_1")
+        building_input("2nd Squad", "squad_2")
+        building_input("3rd Squad", "squad_3")
+        building_input("4th Squad", "squad_4")
+        building_input("Alert Tower", "alert_tower")
+        building_input("Recon Plane 1", "recon_plane_1")
+        building_input("Recon Plane 2", "recon_plane_2")
+        building_input("Recon Plane 3", "recon_plane_3")
+
+    with col2:
+        building_input("Coin Vault", "coin_vault")
+        building_input("Iron Warehouse", "iron_warehouse")
+        building_input("Food Warehouse", "food_warehouse")
+        building_input("Gold Mine 1", "gold_mine_1")
+        building_input("Gold Mine 2", "gold_mine_2")
+        building_input("Gold Mine 3", "gold_mine_3")
+        building_input("Gold Mine 4", "gold_mine_4")
+        building_input("Gold Mine 5", "gold_mine_5")
+        building_input("Iron Mine 1", "iron_mine_1")
+        building_input("Iron Mine 2", "iron_mine_2")
+        building_input("Iron Mine 3", "iron_mine_3")
+        building_input("Iron Mine 4", "iron_mine_4")
+        building_input("Iron Mine 5", "iron_mine_5")
+        building_input("Farmland 1", "farmland_1")
+        building_input("Farmland 2", "farmland_2")
+        building_input("Farmland 3", "farmland_3")
+        building_input("Farmland 4", "farmland_4")
+        building_input("Farmland 5", "farmland_5")
+        building_input("Smelter 1", "smelter_1")
+        building_input("Smelter 2", "smelter_2")
+        building_input("Smelter 3", "smelter_3")
+        building_input("Smelter 4", "smelter_4")
+        building_input("Smelter 5", "smelter_5")
+        building_input("Training Base 1", "traning_base_1")
+        building_input("Training Base 2", "traning_base_2")
+        building_input("Training Base 3", "traning_base_3")
+        building_input("Training Base 4", "traning_base_4")
+        building_input("Training Base 5", "traning_base_5")
+        building_input("Material Workshop 1", "material_workshop_1")
+        building_input("Material Workshop 2", "material_workshop_2")
+        building_input("Material Workshop 3", "material_workshop_3")
+        building_input("Material Workshop 4", "material_workshop_4")
+        building_input("Material Workshop 5", "material_workshop_5")
+        building_input("Builder's Hut", "builders_hut")
+        building_input("Tavern", "tavern")
+        building_input("Tactical Institute", "tactical_institute")
+        building_input("Alliance Hub", "alliance_support_hub")
+
+    st.write("---")
+    if st.button("💾 Save Buildings Data"):
+        save_buildings()
 
 # -------------------------------
 # DASHBOARD PAGE (compact teams + Buildings with robust % gradients)
