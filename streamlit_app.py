@@ -523,14 +523,26 @@ else:
         v = _get_level_raw(key)
         return int(v) if v.isdigit() else 0
 
-    # Robust HQ: prefer cached session value; fallback to last known numeric
-    bl = (st.session_state.get("base_level_str") or settings.get("base_level") or "").strip()
-    try:
-        HQ = int(bl) if bl.isdigit() else int(st.session_state.get("cached_HQ", 0))
-    except Exception:
-        HQ = int(st.session_state.get("cached_HQ", 0))
-    HQ = max(0, min(999, HQ))
-    st.session_state["cached_HQ"] = HQ  # persist across reruns
+# Robust HQ: try several sources and cache
+candidates = [
+    st.session_state.get("base_level_str", ""),
+    settings.get("base_level", ""),
+    st.session_state.get("buildings_hq_level", ""),
+]
+bl = ""
+for c in candidates:
+    s = str(c).strip()
+    if s.isdigit():
+        bl = s
+        break
+
+HQ = int(bl) if bl else int(st.session_state.get("cached_HQ", 0))
+HQ = max(0, min(999, HQ))
+st.session_state["cached_HQ"] = HQ
+
+# Optional nudge so you know why % might be blank
+if HQ == 0:
+    st.info("Enter a Base Level at the top to enable building percentages.")
 
     # Formatting
     def fmt_level(n: int) -> str:
