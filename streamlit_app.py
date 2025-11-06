@@ -460,7 +460,7 @@ elif page == "Buildings":
                 )
 
 # -------------------------------
-# DASHBOARD PAGE
+# DASHBOARD PAGE (Teams 1–3 only; cleaned persistence)
 # -------------------------------
 else:
     heroes = load_heroes()
@@ -483,6 +483,8 @@ else:
 
     with hdr_col:
         st.title("Shōckwave")
+
+        # Base Level & Total Hero Power directly under title
         base_col, total_col, _sp = st.columns([1, 2, 4])
         with base_col:
             bl = st.text_input(
@@ -498,9 +500,14 @@ else:
 
         with total_col:
             total_power = 0 if heroes.empty else pd.to_numeric(heroes.get("power"), errors="coerce").fillna(0).sum()
-            st.text_input("Total Hero Power", value=f"{int(total_power):,}", disabled=True, key="total_power")
+            st.text_input(
+                "Total Hero Power",
+                value=f"{int(total_power):,}",
+                disabled=True,
+                key="total_power",
+            )
 
-    # Team rows (1–3 only)
+    # Helper for team rows
     def render_team_row(team_num: int):
         st.markdown("---")
         row_cols = st.columns([1.2, 1.0, 1.0, 6.8])
@@ -518,6 +525,7 @@ else:
                 on_change=save_settings_from_state,
             )
 
+    # Only render 1–3
     render_team_row(1)
     render_team_row(2)
     render_team_row(3)
