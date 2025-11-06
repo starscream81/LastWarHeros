@@ -512,8 +512,6 @@ else:
     # --------- Buildings Section ----------
     st.subheader("Buildings")
 
-    st.subheader("Buildings")
-
     # -------- numeric helpers --------
     def get_level(key: str) -> int:
         raw = str(st.session_state.get(f"buildings_{key}", "") or "")
@@ -584,10 +582,14 @@ else:
 
     def row_pair(label1, val1, label2, val2):
         c1, c2, c3, c4 = st.columns([1.2, 0.8, 1.2, 0.8])
-        with c1: st.markdown(f"**{label1}**")
-        with c2: st.markdown(val1 if val1 else "&nbsp;", unsafe_allow_html=True)
-        with c3: st.markdown(f"**{label2}**")
-        with c4: st.markown(val2 if val2 else "&nbsp;", unsafe_allow_html=True)
+        with c1:
+            st.markdown(f"**{label1}**")
+        with c2:
+            st.markdown(val1 if val1 else "&nbsp;", unsafe_allow_html=True)
+        with c3:
+            st.markdown(f"**{label2}**")
+        with c4:
+            st.markdown(val2 if val2 else "&nbsp;", unsafe_allow_html=True)
 
     def row_pair_pct(label1, pct1, label2=None, pct2=None):
         if label2 is None:
