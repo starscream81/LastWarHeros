@@ -289,12 +289,12 @@ elif page == "Add / Update Hero":
                 st.error(f"Failed to save: {e}")
 
 # -------------------------------
-# DASHBOARD (persistent Base Level + Team Power; tight HTML tables)
+# DASHBOARD (simplified view: Team headers only; no hero tables)
 # -------------------------------
 else:
     heroes = load_heroes()
 
-    # Load persisted settings and prefill session keys once
+    # Load persisted settings once
     settings = load_settings()
     for key, default in [
         ("base_level_str", settings.get("base_level", "")),
@@ -306,7 +306,7 @@ else:
         if key not in st.session_state:
             st.session_state[key] = default or ""
 
-    # Header: image + title; Base Level & Total under title (left block)
+    # Header layout: frog image left, title & inputs right
     img_col, hdr_col = st.columns([1, 7])
     with img_col:
         st.image("frog.png", use_column_width=False, width=320)
@@ -314,9 +314,9 @@ else:
     with hdr_col:
         st.title("Shōckwave")
 
+        # Base Level and Total Hero Power directly under title
         base_col, total_col, _sp = st.columns([1, 2, 4])
         with base_col:
-            # tiny 2-digit text box (persisted)
             bl = st.text_input(
                 "Base Level",
                 value=st.session_state.get("base_level_str", ""),
@@ -324,7 +324,6 @@ else:
                 key="base_level_str",
                 on_change=save_settings_from_state,
             )
-            # sanitize to digits only
             if bl and not bl.isdigit():
                 st.session_state.base_level_str = "".join(ch for ch in bl if ch.isdigit())[:2]
                 save_settings_from_state()
@@ -333,20 +332,15 @@ else:
             total_power = 0 if heroes.empty else pd.to_numeric(heroes.get("power"), errors="coerce").fillna(0).sum()
             st.text_input("Total Hero Power", value=f"{int(total_power):,}", disabled=True, key="total_power")
 
-    if heroes.empty:
-        st.info("No hero data yet. Add heroes first in 'Add / Update Hero'.")
-        st.stop()
-
-    def render_team_section(team_num: int):
+    # Simple helper to render Team rows
+    def render_team_row(team_num: int):
         st.markdown("---")
-
-        # One line: Team X | Type | manual Power (persisted) (left-aligned)
-        head, typecol, pcol, _sp = st.columns([1.1, 0.9, 0.9, 5.1])
-        with head:
+        row_cols = st.columns([1.2, 1.0, 1.0, 6.8])  # label | dropdown | power | spacer
+        with row_cols[0]:
             st.markdown(f"### Team {team_num}")
-        with typecol:
+        with row_cols[1]:
             st.selectbox("Type", ["Tank", "Air", "Missile", "Mixed"], key=f"team_type_{team_num}")
-        with pcol:
+        with row_cols[2]:
             manual_key = f"team_power_{team_num}_manual"
             st.text_input(
                 "Power",
@@ -356,46 +350,8 @@ else:
                 on_change=save_settings_from_state,
             )
 
-        # Data for table (Name, Level, Power)
-        team_df = heroes[heroes.get("team") == str(team_num)].copy()
-        team_df["power"] = pd.to_numeric(team_df.get("power"), errors="coerce").fillna(0)
-        team_df["level"] = pd.to_numeric(team_df.get("level"), errors="coerce").fillna(0)
-        team_df = team_df.sort_values("power", ascending=False)
-        top5 = team_df[["name", "level", "power"]].head(5).copy()
-        while len(top5) < 5:
-            top5 = pd.concat([top5, pd.DataFrame([{"name": "", "level": "", "power": ""}])], ignore_index=True)
-
-        tdisp = top5.rename(columns={"name": "Name", "level": "Level", "power": "Power"}).reset_index(drop=True)
-
-        # format ints with commas
-        def fmt_int(x):
-            try:
-                if x == "" or pd.isna(x):
-                    return ""
-                return f"{int(float(x)):,}"
-            except Exception:
-                return x
-
-        # Tight, centered, indexless HTML table
-        NAME_W, LEVEL_W, POWER_W = "140px", "70px", "110px"
-        TABLE_W = "360px"
-
-        styler = (
-            tdisp.style
-            .format({"Level": fmt_int, "Power": fmt_int})
-            .hide(axis="index")
-            .set_table_styles([
-                {"selector": "table", "props": [("width", TABLE_W), ("table-layout", "fixed"), ("margin-left", "0")]},
-                {"selector": "th", "props": [("text-align", "center"), ("padding", "4px 6px")]},
-                {"selector": "td", "props": [("text-align", "center"), ("padding", "4px 6px")]},
-                {"selector": "th.col0, td.col0", "props": [("width", NAME_W)]},
-                {"selector": "th.col1, td.col1", "props": [("width", LEVEL_W)]},
-                {"selector": "th.col2, td.col2", "props": [("width", POWER_W)]},
-            ])
-        )
-        st.markdown(styler.to_html(), unsafe_allow_html=True)
-
-    render_team_section(1)
-    render_team_section(2)
-    render_team_section(3)
-    render_team_section(4)
+    # Four clean Team rows
+    render_team_row(1)
+    render_team_row(2)
+    render_team_row(3)
+    render_team_row(4)
