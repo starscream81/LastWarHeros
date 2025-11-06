@@ -111,16 +111,40 @@ def safe_int_format(x):
         return x
 
 # -------------------------------
-# UI nav
+# UI nav with password gating
 # -------------------------------
-if "nav" not in st.session_state:
-    st.session_state["nav"] = "Dashboard"  # default page on load
 
-page = st.sidebar.radio(
-    "Navigate",
-    ["Dashboard", "Heroes", "Add / Update Hero"],
-    key="nav"
-)
+# Define your simple password here (you can change it anytime)
+APP_PASSWORD = "fuckoff"  # <- change to anything you like
+
+# Password box in sidebar
+st.sidebar.markdown("### 🔑 Access")
+entered_password = st.sidebar.text_input("Enter password", type="password")
+
+# Check authentication
+authenticated = entered_password == APP_PASSWORD
+if authenticated:
+    st.session_state["auth"] = True
+elif "auth" not in st.session_state:
+    st.session_state["auth"] = False
+
+# Determine which pages to show
+if st.session_state["auth"]:
+    nav_options = ["Dashboard", "Heroes", "Add / Update Hero"]
+else:
+    nav_options = ["Dashboard"]
+
+# Default page on load
+if "nav" not in st.session_state or st.session_state["nav"] not in nav_options:
+    st.session_state["nav"] = "Dashboard"
+
+page = st.sidebar.radio("Navigate", nav_options, key="nav")
+
+# Optional: display status
+if not st.session_state["auth"]:
+    st.sidebar.caption("🔒 Heroes and editing locked until password entered.")
+else:
+    st.sidebar.caption("✅ Access granted")
 
 
 # -------------------------------
