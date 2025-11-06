@@ -512,10 +512,10 @@ else:
     # --------- Buildings Section ----------
     st.subheader("Buildings")
 
-    st.caption(f"Detected HQ: {''.join(ch for ch in str(st.session_state.get('base_level_str','')) if ch.isdigit()) or st.session_state.get('cached_HQ', 0)}")
+    st.subheader("Buildings")
 
+    # -------- numeric helpers --------
     def get_level(key: str) -> int:
-        # Safely parse building level, ignoring any non-digits
         raw = str(st.session_state.get(f"buildings_{key}", "") or "")
         digits = "".join(ch for ch in raw if ch.isdigit())
         return int(digits) if digits else 0
@@ -534,17 +534,15 @@ else:
             break
     HQ = max(0, min(999, HQ))
     st.session_state["cached_HQ"] = HQ
-    # keep buildings_hq_level in sync with the Base Level so both pages agree
     st.session_state["buildings_hq_level"] = str(HQ) if HQ > 0 else st.session_state.get("buildings_hq_level", "")
 
-    # TEMP: show what HQ we detected (remove later if you want)
+    # Debug hint (remove if you prefer)
     st.caption(f"Detected HQ: {HQ}")
 
-    # ---------- Helpers ensure they're defined before use ----------
+    # -------- UI helpers (defined BEFORE use) --------
     def fmt_level(n: int) -> str:
         return "" if n <= 0 else str(n)
 
-    # Gradient percent box (0 → red, 100 → green)
     def percent_box(value_pct: str):
         if not value_pct:
             st.markdown("&nbsp;", unsafe_allow_html=True)
@@ -562,43 +560,8 @@ else:
             unsafe_allow_html=True,
         )
 
-    # Grouped % = sum(levels) / HQ
-    def pct_of_hq(levels: list[int]) -> str:
-        vals = [v for v in levels if v > 0]
-        if HQ <= 0 or not vals:
-            return ""
-        pct = round((sum(vals) / HQ) * 100)
-        return f"{max(0, min(150, pct))}%"
-
-    # Single % = level / HQ
-    def pct_single(level: int) -> str:
-        if HQ <= 0 or level <= 0:
-            return ""
-        pct = round((level / HQ) * 100)
-        return f"{max(0, min(150, pct))}%"
-
-    # Row helpers (no headers)
-    def row_pair(label1, val1, label2, val2):
-        c1, c2, c3, c4 = st.columns([1.2, 0.8, 1.2, 0.8])
-        with c1: st.markdown(f"**{label1}**")
-        with c2: st.markdown(val1 if val1 else "&nbsp;", unsafe_allow_html=True)
-        with c3: st.markdown(f"**{label2}**")
-        with c4: st.markdown(val2 if val2 else "&nbsp;", unsafe_allow_html=True)
-
-    def row_pair_pct(label1, pct1, label2=None, pct2=None):
-        if label2 is None:
-            a, b, _ = st.columns([1.2, 0.8, 2.4])
-            with a: st.markdown(f"**{label1}**")
-            with b: percent_box(pct1)
-        else:
-            a, b, c, d = st.columns([1.2, 0.8, 1.2, 0.8])
-            with a: st.markdown(f"**{label1}**")
-            with b: percent_box(pct1)
-            with c: st.markdown(f"**{label2}**")
-            with d: percent_box(pct2 or "")
-
     def pct_group(keys: list[str]) -> str:
-        # Consider the row "present" if any textbox has any text (even "0")
+        # Consider row present if any textbox has any text (even "0")
         any_filled = any(str(st.session_state.get(f"buildings_{k}", "") or "").strip() != "" for k in keys)
         if HQ <= 0 or not any_filled:
             return ""
@@ -619,7 +582,26 @@ else:
         pct = round((val / HQ) * 100)
         return f"{max(0, min(150, pct))}%"
 
-    # Top Building Levels
+    def row_pair(label1, val1, label2, val2):
+        c1, c2, c3, c4 = st.columns([1.2, 0.8, 1.2, 0.8])
+        with c1: st.markdown(f"**{label1}**")
+        with c2: st.markdown(val1 if val1 else "&nbsp;", unsafe_allow_html=True)
+        with c3: st.markdown(f"**{label2}**")
+        with c4: st.markown(val2 if val2 else "&nbsp;", unsafe_allow_html=True)
+
+    def row_pair_pct(label1, pct1, label2=None, pct2=None):
+        if label2 is None:
+            a, b, _ = st.columns([1.2, 0.8, 2.4])
+            with a: st.markdown(f"**{label1}**")
+            with b: percent_box(pct1)
+        else:
+            a, b, c, d = st.columns([1.2, 0.8, 1.2, 0.8])
+            with a: st.markdown(f"**{label1}**")
+            with b: percent_box(pct1)
+            with c: st.markdown(f"**{label2}**")
+            with d: percent_box(pct2 or "")
+
+    # -------- Top Building Levels (left/right table 1) --------
     wall = get_level("wall")
     tc_high = max(get_level("tech_center_1"), get_level("tech_center_2"), get_level("tech_center_3"))
     tam_high = max(get_level("tank_center"), get_level("aircraft_center"), get_level("missile_center"))
@@ -633,8 +615,7 @@ else:
 
     st.write("")
 
-    # Percent table
-    # Left side groups (sum/HQ; show 0% if any field present)
+    # -------- Percent table (sum/HQ) --------
     pct_tc   = pct_group(["tech_center_1", "tech_center_2", "tech_center_3"])
     pct_tam  = pct_group(["tank_center", "aircraft_center", "missile_center"])
     pct_bar  = pct_group(["barracks_1", "barracks_2", "barracks_3", "barracks_4"])
@@ -645,7 +626,6 @@ else:
     pct_alt  = pct_single_key("alert_tower")
     pct_rcn  = pct_group(["recon_plane_1", "recon_plane_2", "recon_plane_3"])
 
-    # Right side resources/support
     pct_oil  = pct_group(["oil_well_1", "oil_well_2", "oil_well_3", "oil_well_4", "oil_well_5"])
     pct_coin = pct_single_key("coin_vault")
     pct_iwh  = pct_single_key("iron_warehouse")
@@ -662,7 +642,7 @@ else:
     pct_tav  = pct_single_key("tavern")
     pct_tac  = pct_single_key("tactical_institute")
 
-    # Render rows (with gradient %)
+    # -------- Render rows with gradient chips --------
     row_pair_pct("Tech Center:", pct_tc, "Oil Well", pct_oil)
     row_pair_pct("Tank/Air/Missile:", pct_tam, "Coin Vault", pct_coin)
     row_pair_pct("Barracks:", pct_bar, "Iron Warehouse", pct_iwh)
