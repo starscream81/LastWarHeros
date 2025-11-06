@@ -514,7 +514,7 @@ else:
 
     st.caption(f"Detected HQ: {''.join(ch for ch in str(st.session_state.get('base_level_str','')) if ch.isdigit()) or st.session_state.get('cached_HQ', 0)}")
 
-    def get_level(key: str) -> int:
+        def get_level(key: str) -> int:
         # Safely parse building level, ignoring any non-digits
         raw = str(st.session_state.get(f"buildings_{key}", "") or "")
         digits = "".join(ch for ch in raw if ch.isdigit())
@@ -534,6 +534,9 @@ else:
             break
     HQ = max(0, min(999, HQ))
     st.session_state["cached_HQ"] = HQ  # cache for reruns
+
+    # TEMP: show what HQ we detected (remove later if you want)
+    st.caption(f"Detected HQ: {HQ}")
 
     # ---------- Helpers ensure they're defined before use ----------
     def fmt_level(n: int) -> str:
@@ -593,7 +596,7 @@ else:
             with d: percent_box(pct2 or "")
 
     def pct_group(keys: list[str]) -> str:
-        # Consider the row "present" if any text box has any non-empty value
+        # Consider row “present” if any textbox has any text (even “0”)
         any_filled = any(str(st.session_state.get(f"buildings_{k}", "") or "").strip() != "" for k in keys)
         if HQ <= 0 or not any_filled:
             return ""
@@ -601,7 +604,7 @@ else:
         for k in keys:
             raw = str(st.session_state.get(f"buildings_{k}", "") or "")
             digits = "".join(ch for ch in raw if ch.isdigit())
-            total += int(digits) if digits else 0  # allow zeros
+            total += int(digits) if digits else 0
         pct = round((total / HQ) * 100)
         return f"{max(0, min(150, pct))}%"
 
@@ -610,10 +613,9 @@ else:
         if HQ <= 0 or raw == "":
             return ""
         digits = "".join(ch for ch in raw if ch.isdigit())
-        val = int(digits) if digits else 0  # allow zeros
+        val = int(digits) if digits else 0
         pct = round((val / HQ) * 100)
         return f"{max(0, min(150, pct))}%"
-
 
     # Top Building Levels
     wall = get_level("wall")
@@ -657,7 +659,6 @@ else:
     pct_bld  = pct_single_key("builders_hut")
     pct_tav  = pct_single_key("tavern")
     pct_tac  = pct_single_key("tactical_institute")
-
 
     # Render rows (with gradient %)
     row_pair_pct("Tech Center:", pct_tc, "Oil Well", pct_oil)
