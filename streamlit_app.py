@@ -407,6 +407,10 @@ elif page == "Buildings":
         building_input("Recon Plane 1", "recon_plane_1")
         building_input("Recon Plane 2", "recon_plane_2")
         building_input("Recon Plane 3", "recon_plane_3")
+        building_input("Drone Parts Workshop", "drone_parts_workshop")
+        building_input("Chip Lab", "chip_lab")
+        building_input("Component Factory", "component_factory")
+        building_input("Gear Factory", "gear_factory")
 
     with col2:
         building_input("Coin Vault", "coin_vault")
@@ -442,6 +446,11 @@ elif page == "Buildings":
         building_input("Material Workshop 3", "material_workshop_3")
         building_input("Material Workshop 4", "material_workshop_4")
         building_input("Material Workshop 5", "material_workshop_5")
+        building_input("Oil Well 1", "oil_well_1")
+        building_input("Oil Well 2", "oil_well_2")
+        building_input("Oil Well 3", "oil_well_3")
+        building_input("Oil Well 4", "oil_well_4")
+        building_input("Oil Well 5", "oil_well_5")
         building_input("Builder's Hut", "builders_hut")
         building_input("Tavern", "tavern")
         building_input("Tactical Institute", "tactical_institute")
