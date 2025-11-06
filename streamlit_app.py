@@ -589,7 +589,22 @@ else:
             with b: percent_box(pct1)
             with c: st.markdown(f"**{label2}**")
             with d: percent_box(pct2 or "")
+    def pct_group(keys: list[str]) -> str:
+        # Show % if *any* of the fields was entered (even if they parse to 0)
+        any_filled = any((_get_level_raw(k) or "").strip() != "" for k in keys)
+        if HQ <= 0 or not any_filled:
+            return ""
+        total = sum(get_level(k) for k in keys)  # zeros allowed
+        pct = round((total / HQ) * 100)
+        return f"{max(0, min(150, pct))}%"
 
+    def pct_single_key(key: str) -> str:
+        raw = (_get_level_raw(key) or "").strip()
+        if HQ <= 0 or raw == "":
+            return ""
+        val = get_level(key)  # may be 0 → shows 0%
+        pct = round((val / HQ) * 100)
+        return f"{max(0, min(150, pct))}%"
 
     # Top Building Levels
     wall = get_level("wall")
@@ -606,32 +621,34 @@ else:
     st.write("")
 
     # Percent table
-    pct_tc   = pct_of_hq([get_level("tech_center_1"), get_level("tech_center_2"), get_level("tech_center_3")])
-    pct_tam  = pct_of_hq([get_level("tank_center"), get_level("aircraft_center"), get_level("missile_center")])
-    pct_bar  = pct_of_hq([get_level("barracks_1"), get_level("barracks_2"), get_level("barracks_3"), get_level("barracks_4")])
-    pct_hos  = pct_of_hq([get_level("hospital_1"), get_level("hospital_2"), get_level("hospital_3"), get_level("hospital_4")])
-    pct_trn  = pct_of_hq([get_level("training_grounds_1"), get_level("training_grounds_2"), get_level("training_grounds_3"), get_level("training_grounds_4")])
-    pct_emg  = pct_single(get_level("emergency_center"))
-    pct_sq   = pct_of_hq([get_level("squad_1"), get_level("squad_2"), get_level("squad_3"), get_level("squad_4")])
-    pct_alt  = pct_single(get_level("alert_tower"))
-    pct_rcn  = pct_of_hq([get_level("recon_plane_1"), get_level("recon_plane_2"), get_level("recon_plane_3")])
+    # Left side groups (sum/HQ; show 0% if any field present)
+    pct_tc   = pct_group(["tech_center_1", "tech_center_2", "tech_center_3"])
+    pct_tam  = pct_group(["tank_center", "aircraft_center", "missile_center"])
+    pct_bar  = pct_group(["barracks_1", "barracks_2", "barracks_3", "barracks_4"])
+    pct_hos  = pct_group(["hospital_1", "hospital_2", "hospital_3", "hospital_4"])
+    pct_trn  = pct_group(["training_grounds_1", "training_grounds_2", "training_grounds_3", "training_grounds_4"])
+    pct_emg  = pct_single_key("emergency_center")
+    pct_sq   = pct_group(["squad_1", "squad_2", "squad_3", "squad_4"])
+    pct_alt  = pct_single_key("alert_tower")
+    pct_rcn  = pct_group(["recon_plane_1", "recon_plane_2", "recon_plane_3"])
 
-    pct_oil  = pct_of_hq([get_level("oil_well_1"), get_level("oil_well_2"), get_level("oil_well_3"), get_level("oil_well_4"), get_level("oil_well_5")])
-    pct_coin = pct_single(get_level("coin_vault"))
-    pct_iwh  = pct_single(get_level("iron_warehouse"))
-    pct_fwh  = pct_single(get_level("food_warehouse"))
-    pct_gold = pct_of_hq([get_level("gold_mine_1"), get_level("gold_mine_2"), get_level("gold_mine_3"), get_level("gold_mine_4"), get_level("gold_mine_5")])
-    pct_iron = pct_of_hq([get_level("iron_mine_1"), get_level("iron_mine_2"), get_level("iron_mine_3"), get_level("iron_mine_4"), get_level("iron_mine_5")])
-    pct_farm = pct_of_hq([get_level("farmland_1"), get_level("farmland_2"), get_level("farmland_3"), get_level("farmland_4"), get_level("farmland_5")])
-    pct_smel = pct_of_hq([get_level("smelter_1"), get_level("smelter_2"), get_level("smelter_3"), get_level("smelter_4"), get_level("smelter_5")])
-    pct_tbase= pct_of_hq([get_level("traning_base_1"), get_level("traning_base_2"), get_level("traning_base_3"), get_level("traning_base_4"), get_level("traning_base_5")])
-    pct_mw   = pct_of_hq([get_level("material_workshop_1"), get_level("material_workshop_2"), get_level("material_workshop_3"),
-                           get_level("material_workshop_4"), get_level("material_workshop_5")])
+    # Right side resources/support
+    pct_oil  = pct_group(["oil_well_1", "oil_well_2", "oil_well_3", "oil_well_4", "oil_well_5"])
+    pct_coin = pct_single_key("coin_vault")
+    pct_iwh  = pct_single_key("iron_warehouse")
+    pct_fwh  = pct_single_key("food_warehouse")
+    pct_gold = pct_group(["gold_mine_1", "gold_mine_2", "gold_mine_3", "gold_mine_4", "gold_mine_5"])
+    pct_iron = pct_group(["iron_mine_1", "iron_mine_2", "iron_mine_3", "iron_mine_4", "iron_mine_5"])
+    pct_farm = pct_group(["farmland_1", "farmland_2", "farmland_3", "farmland_4", "farmland_5"])
+    pct_smel = pct_group(["smelter_1", "smelter_2", "smelter_3", "smelter_4", "smelter_5"])
+    pct_tbase= pct_group(["traning_base_1", "traning_base_2", "traning_base_3", "traning_base_4", "traning_base_5"])
+    pct_mw   = pct_group(["material_workshop_1", "material_workshop_2", "material_workshop_3", "material_workshop_4", "material_workshop_5"])
 
-    pct_hub  = pct_single(get_level("alliance_support_hub"))
-    pct_bld  = pct_single(get_level("builders_hut"))
-    pct_tav  = pct_single(get_level("tavern"))
-    pct_tac  = pct_single(get_level("tactical_institute"))
+    pct_hub  = pct_single_key("alliance_support_hub")
+    pct_bld  = pct_single_key("builders_hut")
+    pct_tav  = pct_single_key("tavern")
+    pct_tac  = pct_single_key("tactical_institute")
+
 
     # Render rows (with gradient %)
     row_pair_pct("Tech Center:", pct_tc, "Oil Well", pct_oil)
