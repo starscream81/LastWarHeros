@@ -520,7 +520,7 @@ else:
         digits = "".join(ch for ch in raw if ch.isdigit())
         return int(digits) if digits else 0
 
-    # Determine HQ level robustly (strip all non-digits)
+    # Determine HQ level robustly (strip all non-digits) and mirror to buildings
     candidates = [
         st.session_state.get("base_level_str", ""),
         settings.get("base_level", ""),
@@ -533,7 +533,13 @@ else:
             HQ = int(digits)
             break
     HQ = max(0, min(999, HQ))
-    st.session_state["cached_HQ"] = HQ  # cache for reruns
+    st.session_state["cached_HQ"] = HQ
+    # keep buildings_hq_level in sync with the Base Level so both pages agree
+    st.session_state["buildings_hq_level"] = str(HQ) if HQ > 0 else st.session_state.get("buildings_hq_level", "")
+
+    # DEBUG: show the detected HQ and a demo chip so you can see gradients
+    st.caption(f"Detected HQ: {HQ}")
+    percent_box("65%")  # you should see a greenish chip; if you don't, the renderer isn't being reached
 
     # TEMP: show what HQ we detected (remove later if you want)
     st.caption(f"Detected HQ: {HQ}")
@@ -596,7 +602,7 @@ else:
             with d: percent_box(pct2 or "")
 
     def pct_group(keys: list[str]) -> str:
-        # Consider row “present” if any textbox has any text (even “0”)
+        # Consider the row "present" if any textbox has any text (even "0")
         any_filled = any(str(st.session_state.get(f"buildings_{k}", "") or "").strip() != "" for k in keys)
         if HQ <= 0 or not any_filled:
             return ""
