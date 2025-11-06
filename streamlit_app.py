@@ -589,22 +589,29 @@ else:
             with b: percent_box(pct1)
             with c: st.markdown(f"**{label2}**")
             with d: percent_box(pct2 or "")
+
     def pct_group(keys: list[str]) -> str:
-        # Show % if *any* of the fields was entered (even if they parse to 0)
-        any_filled = any((_get_level_raw(k) or "").strip() != "" for k in keys)
+        # Consider the row "present" if any text box has any non-empty value
+        any_filled = any(str(st.session_state.get(f"buildings_{k}", "") or "").strip() != "" for k in keys)
         if HQ <= 0 or not any_filled:
             return ""
-        total = sum(get_level(k) for k in keys)  # zeros allowed
+        total = 0
+        for k in keys:
+            raw = str(st.session_state.get(f"buildings_{k}", "") or "")
+            digits = "".join(ch for ch in raw if ch.isdigit())
+            total += int(digits) if digits else 0  # allow zeros
         pct = round((total / HQ) * 100)
         return f"{max(0, min(150, pct))}%"
 
     def pct_single_key(key: str) -> str:
-        raw = (_get_level_raw(key) or "").strip()
+        raw = str(st.session_state.get(f"buildings_{key}", "") or "").strip()
         if HQ <= 0 or raw == "":
             return ""
-        val = get_level(key)  # may be 0 → shows 0%
+        digits = "".join(ch for ch in raw if ch.isdigit())
+        val = int(digits) if digits else 0  # allow zeros
         pct = round((val / HQ) * 100)
         return f"{max(0, min(150, pct))}%"
+
 
     # Top Building Levels
     wall = get_level("wall")
