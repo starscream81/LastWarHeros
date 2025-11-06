@@ -512,14 +512,13 @@ else:
     # --------- Buildings Section ----------
     st.subheader("Buildings")
 
-    def _get_level_raw(key: str) -> str:
-        return str(st.session_state.get(f"buildings_{key}", "") or "").strip()
-
     def get_level(key: str) -> int:
-        v = _get_level_raw(key)
-        return int(v) if v.isdigit() else 0
+        # Safely parse building level, ignoring any non-digits
+        raw = str(st.session_state.get(f"buildings_{key}", "") or "")
+        digits = "".join(ch for ch in raw if ch.isdigit())
+        return int(digits) if digits else 0
 
-    # Determine HQ level robustly
+    # Determine HQ level robustly (strip all non-digits)
     candidates = [
         st.session_state.get("base_level_str", ""),
         settings.get("base_level", ""),
@@ -527,15 +526,15 @@ else:
     ]
     HQ = 0
     for c in candidates:
-        s = str(c).strip()
-        if s.isdigit():
-            HQ = int(s)
+        digits = "".join(ch for ch in str(c) if ch.isdigit())
+        if digits:
+            HQ = int(digits)
             break
     HQ = max(0, min(999, HQ))
-    st.session_state["cached_HQ"] = HQ
+    st.session_state["cached_HQ"] = HQ  # cache for reruns
 
-    def fmt_level(n: int) -> str:
-        return "" if n <= 0 else str(n)
+    # Optional debug hint – remove later if desired
+    # st.caption(f"Detected HQ: {HQ}")
 
     # Gradient percent box
     def percent_box(value_pct: str):
