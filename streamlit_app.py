@@ -537,10 +537,6 @@ else:
     # keep buildings_hq_level in sync with the Base Level so both pages agree
     st.session_state["buildings_hq_level"] = str(HQ) if HQ > 0 else st.session_state.get("buildings_hq_level", "")
 
-    # DEBUG: show the detected HQ and a demo chip so you can see gradients
-    st.caption(f"Detected HQ: {HQ}")
-    percent_box("65%")  # you should see a greenish chip; if you don't, the renderer isn't being reached
-
     # TEMP: show what HQ we detected (remove later if you want)
     st.caption(f"Detected HQ: {HQ}")
 
