@@ -263,12 +263,12 @@ elif page == "Add / Update Hero":
                 st.error(f"Failed to save: {e}")
 
 # -------------------------------
-# DASHBOARD (compact header; tight tables; no index; controls on left)
+# DASHBOARD (compact header; tight HTML tables; no index)
 # -------------------------------
 else:
     heroes = load_heroes()
 
-    # Header row: image | title; then (under title) Base Level + Total Power
+    # Header: image + title; Base Level & Total under title (left block)
     img_col, hdr_col = st.columns([1, 7])
     with img_col:
         st.image("frog.png", use_column_width=False, width=320)
@@ -276,7 +276,6 @@ else:
     with hdr_col:
         st.title("Shōckwave")
 
-        # Directly under the title, to the LEFT (next to picture): Base Level + Total Power
         base_col, total_col, _sp = st.columns([1, 2, 4])
         with base_col:
             # tiny 2-digit text box (no +/-)
@@ -291,7 +290,6 @@ else:
 
         with total_col:
             total_power = 0 if heroes.empty else pd.to_numeric(heroes.get("power"), errors="coerce").fillna(0).sum()
-            # compact box; fits 13 digits with commas
             st.text_input("Total Hero Power", value=f"{int(total_power):,}", disabled=True, key="total_power")
 
     if heroes.empty:
@@ -301,30 +299,28 @@ else:
     def render_team_section(team_num: int):
         st.markdown("---")
 
-        # One line: Team X | Type | manual Power (all aligned to the LEFT)
+        # One line: Team X | Type | manual Power (left-aligned)
         head, typecol, pcol, _sp = st.columns([1.1, 0.9, 0.9, 5.1])
         with head:
             st.markdown(f"### Team {team_num}")
         with typecol:
             st.selectbox("Type", ["Tank", "Air", "Missile", "Mixed"], key=f"team_type_{team_num}")
         with pcol:
-            # Manual Power (10 chars max)
             manual_key = f"team_power_{team_num}_manual"
             st.text_input("Power", value=st.session_state.get(manual_key, ""), max_chars=10, key=manual_key)
 
-        # Table UNDER the header line
+        # Data for table (Name, Level, Power)
         team_df = heroes[heroes.get("team") == str(team_num)].copy()
         team_df["power"] = pd.to_numeric(team_df.get("power"), errors="coerce").fillna(0)
         team_df["level"] = pd.to_numeric(team_df.get("level"), errors="coerce").fillna(0)
         team_df = team_df.sort_values("power", ascending=False)
-
         top5 = team_df[["name", "level", "power"]].head(5).copy()
         while len(top5) < 5:
             top5 = pd.concat([top5, pd.DataFrame([{"name": "", "level": "", "power": ""}])], ignore_index=True)
 
-        # Only Name | Level | Power; no index
         tdisp = top5.rename(columns={"name": "Name", "level": "Level", "power": "Power"}).reset_index(drop=True)
 
+        # format ints with commas
         def fmt_int(x):
             try:
                 if x == "" or pd.isna(x):
@@ -333,21 +329,29 @@ else:
             except Exception:
                 return x
 
-        # Tight fixed widths + centered headers & cells
-        NAME_W, LEVEL_W, POWER_W = "160px", "80px", "110px"
-        tstyled = (
+        # Build a tight, centered HTML table (no index)
+        NAME_W, LEVEL_W, POWER_W = "140px", "70px", "110px"
+        TABLE_W = "360px"  # whole table width (well under half page)
+
+        styler = (
             tdisp.style
             .format({"Level": fmt_int, "Power": fmt_int})
             .hide(axis="index")
             .set_table_styles([
+                {"selector": "table", "props": [("width", TABLE_W), ("table-layout", "fixed"), ("margin-left", "0")]},
                 {"selector": "th", "props": [("text-align", "center"), ("padding", "4px 6px")]},
                 {"selector": "td", "props": [("text-align", "center"), ("padding", "4px 6px")]},
+                # force column widths
+                {"selector": "th.col0, td.col0", "props": [("width", NAME_W)]},
+                {"selector": "th.col1, td.col1", "props": [("width", LEVEL_W)]},
+                {"selector": "th.col2, td.col2", "props": [("width", POWER_W)]},
             ])
-            .set_properties(subset=["Name"],  **{"width": NAME_W})
-            .set_properties(subset=["Level"], **{"width": LEVEL_W})
-            .set_properties(subset=["Power"], **{"width": POWER_W})
         )
-        st.write(tstyled, unsafe_allow_html=True)
+
+        # Streamlit sometimes ignores Styler and shows a DataFrame (bringing back index).
+        # Render as pure HTML to guarantee no index and strict widths.
+        html = styler.to_html()
+        st.markdown(html, unsafe_allow_html=True)
 
     render_team_section(1)
     render_team_section(2)
