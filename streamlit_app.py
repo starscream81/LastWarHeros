@@ -179,7 +179,7 @@ def research_load(category: str):
     """Return a DataFrame of rows for a category, columns: name, level, max_level."""
     import pandas as pd
     try:
-        res = sb.table("research_data").select("id, name, level, max_level").eq("category", category).order("name").execute()
+        res = sb.table("research_data").select("id, name, level, max_level, order_index").eq("category", category).order("order_index").execute()
         rows = res.data or []
     except Exception:
         rows = []
