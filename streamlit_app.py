@@ -2,38 +2,32 @@ import streamlit as st
 from supabase import create_client, Client
 from typing import Dict, Any, Tuple, Optional
 from datetime import datetime
+import os
 
 # ---------------------------------------------
 # Setup
 # ---------------------------------------------
 st.set_page_config(page_title="LastWarHeros Dashboard", page_icon="🛡️", layout="wide")
 
-import os
-import streamlit as st
-from supabase import create_client, Client
-
 @st.cache_resource(show_spinner=False)
 def get_supabase() -> Client:
-    # Try Streamlit secrets first
-    url = None
-    key = None
-    if "supabase" in st.secrets:
-        sb_sec = st.secrets["supabase"]
-        url = sb_sec.get("url")
-        key = sb_sec.get("anon_key")
-
-    # Fallback to environment variables if needed
-    url = url or os.environ.get("SUPABASE_URL")
-    key = key or os.environ.get("SUPABASE_ANON_KEY")
-
-    if not url or not key:
-        st.error("❌ Missing Supabase credentials. Check your .streamlit/secrets.toml or environment variables.")
-        st.stop()
-
+    url = st.secrets["supabase"]["url"]
+    key = st.secrets["supabase"]["anon_key"]
     return create_client(url, key)
 
-
 sb = get_supabase()
+
+# Connection status banner
+_conn_ok = True
+try:
+    sb.table("buildings_kv").select("key").limit(1).execute()
+except Exception as _e:
+    _conn_ok = False
+
+if _conn_ok:
+    st.success("Connected to Supabase")
+else:
+    st.error("Cannot reach Supabase. Check URL/key and table permissions.")
 
 # ---------------------------------------------
 # Constants and helpers
@@ -60,21 +54,48 @@ DEFAULT_BUILDINGS = [
 ]
 
 # Minimal password gate for non public pages
+
+def _get_app_password() -> str | None:
+    # Prefer Streamlit secrets -> then environment variable
+    val = None
+    try:
+        # use .get to avoid KeyError; strip whitespace to avoid invisible mismatch
+        val = st.secrets.get("app_password", None)
+    except Exception:
+        val = None
+    env_val = os.environ.get("APP_PASSWORD")
+    # normalize by stripping whitespace if present
+    val = val.strip() if isinstance(val, str) else val
+    env_val = env_val.strip() if isinstance(env_val, str) else env_val
+    return val or env_val
+
+
 def require_auth() -> bool:
     if "authed" not in st.session_state:
         st.session_state.authed = False
     if st.session_state.authed:
         return True
+    app_pw = _get_app_password()
     with st.sidebar:
         st.markdown("### Admin access")
+        if not app_pw:
+            st.warning("No admin password configured. Set app_password in secrets.toml or APP_PASSWORD env var.")
         pwd = st.text_input("Password", type="password", key="pwd_input")
         if st.button("Unlock"):
-            # Use Streamlit secrets for a trivial gate. Replace with proper auth as needed.
-            if pwd and pwd == st.secrets.get("app_password", ""):
+            # normalize user input to avoid whitespace issues
+            user_pw = (pwd or "").strip()
+            if app_pw and user_pw == app_pw:
                 st.session_state.authed = True
                 st.experimental_rerun()
             else:
                 st.error("Incorrect password")
+        with st.expander("Diagnostics (safe)"):
+            st.caption("Shows where credentials are loaded from (no secrets shown).")
+            st.write({
+                "secrets_found": bool(st.secrets),
+                "app_password_from_secrets": bool(st.secrets.get("app_password", None)),
+                "app_password_from_env": bool(os.environ.get("APP_PASSWORD")),
+            })
     return st.session_state.authed
 
 # KV accessors
