@@ -780,7 +780,7 @@ def _update_tracked_from_df(category: str, df_with_track):
 # ============================
 # Research page
 # ============================
-elif page == "Research":
+if page == "Research":
     import pandas as pd
     st.header("Research")
     st.caption("Click a category to expand. Add rows if needed. Edit Level or Max Level, then Save changes.")
