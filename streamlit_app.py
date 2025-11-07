@@ -175,6 +175,18 @@ RESEARCH_CATEGORIES = [
     "Tactical Weapon",
 ]
 
+# --- Local-only tracking for Research rows (session state) ---
+TRACK_STATE_KEY = "research_tracking"  # {category: set([names])}
+
+def _get_tracked_set(category: str) -> set:
+    st.session_state.setdefault(TRACK_STATE_KEY, {})
+    st.session_state[TRACK_STATE_KEY].setdefault(category, set())
+    return st.session_state[TRACK_STATE_KEY][category]
+
+def _update_tracked_from_df(category: str, df_with_track):
+    tracked = {str(r["name"]) for _, r in df_with_track.iterrows() if r.get("track", False)}
+    st.session_state[TRACK_STATE_KEY][category] = tracked
+
 def research_load(category: str):
     """Return a DataFrame of rows for a category, columns: name, level, max_level."""
     import pandas as pd
@@ -757,6 +769,15 @@ elif page == "Research":
 
     for cat in RESEARCH_CATEGORIES:
         df = research_load(cat)
+
+        # Inject 'track' checkbox column from session state (local only)
+        tracked_set = _get_tracked_set(cat)
+        if "track" not in df.columns:
+            df["track"] = df["name"].astype(str).isin(tracked_set)
+
+        # Reorder columns so checkbox appears first
+        editor_cols = ["track", "name", "level", "max_level", "id"] if "id" in df.columns else ["track", "name", "level", "max_level"]
+        show = df[editor_cols].copy()  
         pct = research_completion(df)
 
         # Choose color indicator
@@ -789,6 +810,7 @@ elif page == "Research":
                 num_rows="dynamic",       # allow adding new lines
                 use_container_width=True,
                 column_config={
+                    "track": st.column_config.CheckboxColumn(""),
                     "name": st.column_config.TextColumn("Research Name", width="large", required=True),
                     "level": st.column_config.NumberColumn("Level", min_value=0, max_value=999, step=1),
                     "max_level": st.column_config.NumberColumn("Max Level", min_value=1, max_value=999, step=1),
