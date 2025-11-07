@@ -775,6 +775,35 @@ def _get_tracked_set(category: str) -> set:
 def _update_tracked_from_df(category: str, df_with_track):
     tracked = {str(r["name"]) for _, r in df_with_track.iterrows() if r.get("track", False)}
     st.session_state[TRACK_STATE_KEY][category] = tracked
+    
+# ----- DB-backed tracking helpers -----
+def tracking_load_set(category: str) -> set:
+    try:
+        res = sb.table("research_tracking")\
+                .select("name, tracked")\
+                .eq("category", category)\
+                .eq("tracked", True)\
+                .execute()
+        rows = res.data or []
+        return {r["name"] for r in rows}
+    except Exception:
+        return set()
+
+def tracking_save_from_editor(category: str, edited_df):
+    """Upsert tracking rows to persist 'track' checkbox states."""
+    payload = []
+    for _, r in edited_df.iterrows():
+        nm = str(r.get("name", "")).strip()
+        if not nm:
+            continue
+        tr = bool(r.get("track", False))
+        payload.append({
+            "category": category,
+            "name": nm,
+            "tracked": tr,
+        })
+    if payload:
+        sb.table("research_tracking").upsert(payload).execute()
 
 
 # ============================
@@ -789,10 +818,13 @@ if page == "Research":
         # Load rows for this category
         df = research_load(cat)
 
-        # Session-only "track" column (checkboxes)
-        tracked_set = _get_tracked_set(cat)
+        # DB-backed tracked set (persists across refresh)
+        tracked_set = tracking_load_set(cat)
+
+        # still reflect it in the grid
         if "track" not in df.columns:
             df["track"] = df["name"].astype(str).isin(tracked_set)
+
 
         # Completion for title
         pct = research_completion(df)
@@ -830,8 +862,9 @@ if page == "Research":
                 key=f"research_editor_{cat}",
             )
 
-            # Update local tracking after edits (no DB write)
-            _update_tracked_from_df(cat, edited)
+            # Persist tracking (so fire survives refresh)
+            tracking_save_from_editor(cat, edited)
+
 
             # Right-aligned animated "Researching" badge if anything is tracked
             any_tracked_now = bool(edited["track"].any()) if "track" in edited.columns else False
