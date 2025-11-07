@@ -295,7 +295,127 @@ elif page == "Heroes":
 
 elif page == "Add or Update Hero":
     st.header("Add or Update Hero")
-    st.info("Once you confirm the Heroes table schema, we will build this form to match and persist to Supabase.")
+
+    # Load existing heroes for selector (sorted by power desc)
+    try:
+        sel_cols = "id,name,power"
+        res = sb.table("heroes").select(sel_cols).order("power", desc=True).execute()
+        hero_rows = res.data or []
+    except Exception as e:
+        st.error("Could not load heroes for selector.")
+        st.code(str(e))
+        hero_rows = []
+
+    names = ["<Create new>"] + [h.get("name", "") for h in hero_rows]
+    selected = st.selectbox("Choose hero", names, index=0)
+
+    # If editing, fetch full row
+    current = None
+    if selected != "<Create new>":
+        cur = next((h for h in hero_rows if h.get("name") == selected), None)
+        if cur and cur.get("id"):
+            try:
+                full = sb.table("heroes").select(
+                    "id,name,level,power,"
+                    "rail_gun,rail_gun_stars,armor,armor_stars,data_chip,data_chip_stars,radar,radar_stars,"
+                    "weapon,weapon_level,max_skill_level,skill1,skill2,skill3,"
+                    "type,role,team,updated_at"
+                ).eq("id", cur["id"]).maybe_single().execute().data
+                current = full or cur
+            except Exception:
+                current = cur
+
+    def v(d, k, default=None):
+        return (d.get(k) if d else default)
+
+    colA, colB, colC = st.columns(3)
+
+    with colA:
+        name = st.text_input("Name *", value=v(current, "name", "") or "")
+        type_ = st.text_input("Type", value=v(current, "type", "") or "")
+        role = st.selectbox("Role", ["", "Attack", "Defense", "Support"], index=0 if not v(current, "role") else
+                            ["", "Attack", "Defense", "Support"].index(str(v(current, "role"))) if str(v(current, "role")) in ["", "Attack", "Defense", "Support"] else 0)
+        team = st.text_input("Team", value=v(current, "team", "") or "")
+
+    with colB:
+        level = st.number_input("Level", min_value=0, max_value=200, value=int(v(current, "level", 0) or 0), step=1)
+
+        # power is numeric/decimal in DB; allow float entry
+        p_in = v(current, "power", 0)
+        try:
+            p_val = float(p_in) if p_in is not None else 0.0
+        except Exception:
+            p_val = 0.0
+        power = st.number_input("Power", min_value=0.0, step=1.0, value=float(p_val))
+
+        weapon = st.checkbox("Weapon?", value=bool(v(current, "weapon", False)))
+        weapon_level = st.number_input("Weapon Level", min_value=0, max_value=200, value=int(v(current, "weapon_level", 0) or 0), step=1)
+        max_skill_level = st.number_input("Max Skill Level", min_value=0, max_value=40, value=int(v(current, "max_skill_level", 0) or 0), step=1)
+
+    with colC:
+        rail_gun = st.number_input("Rail Gun", min_value=0, max_value=200, value=int(v(current, "rail_gun", 0) or 0), step=1)
+        rail_gun_stars = st.text_input("Rail Gun Stars", value=v(current, "rail_gun_stars", "") or "")
+        armor = st.number_input("Armor", min_value=0, max_value=200, value=int(v(current, "armor", 0) or 0), step=1)
+        armor_stars = st.text_input("Armor Stars", value=v(current, "armor_stars", "") or "")
+        data_chip = st.number_input("Data Chip", min_value=0, max_value=200, value=int(v(current, "data_chip", 0) or 0), step=1)
+        data_chip_stars = st.text_input("Data Chip Stars", value=v(current, "data_chip_stars", "") or "")
+        radar = st.number_input("Radar", min_value=0, max_value=200, value=int(v(current, "radar", 0) or 0), step=1)
+        radar_stars = st.text_input("Radar Stars", value=v(current, "radar_stars", "") or "")
+
+    st.divider()
+
+    # Validate and actions
+    errors = []
+    if not name.strip():
+        errors.append("Name is required.")
+
+    if errors:
+        for e in errors:
+            st.error(e)
+    else:
+        col_save, col_delete = st.columns([1,1])
+
+        with col_save:
+            if st.button("Save / Upsert", type="primary", use_container_width=True):
+                try:
+                    payload = {
+                        "name": name.strip(),
+                        "type": type_.strip(),
+                        "role": role.strip(),
+                        "team": team.strip(),
+                        "level": int(level),
+                        "power": float(power),
+                        "weapon": bool(weapon),
+                        "weapon_level": int(weapon_level),
+                        "max_skill_level": int(max_skill_level),
+                        "rail_gun": int(rail_gun),
+                        "rail_gun_stars": rail_gun_stars.strip(),
+                        "armor": int(armor),
+                        "armor_stars": armor_stars.strip(),
+                        "data_chip": int(data_chip),
+                        "data_chip_stars": data_chip_stars.strip(),
+                        "radar": int(radar),
+                        "radar_stars": radar_stars.strip(),
+                    }
+                    if current and current.get("id"):
+                        payload["id"] = current["id"]  # retain id to update the same row
+
+                    sb.table("heroes").upsert(payload).execute()
+                    st.success("Saved.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Save failed: {e}")
+
+        with col_delete:
+            if current and current.get("id"):
+                if st.button("Delete hero", use_container_width=True):
+                    try:
+                        sb.table("heroes").delete().eq("id", current["id"]).execute()
+                        st.success("Deleted.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Delete failed: {e}")
+
 
 # --------------------------------------------------
 # Footer
