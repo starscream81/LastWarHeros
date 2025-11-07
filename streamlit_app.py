@@ -34,12 +34,11 @@ def get_supabase() -> Client:
 sb: Client = get_supabase()
 
 # Connection banner
-_conn_ok = True
 try:
     sb.table("buildings_kv").select("key").limit(1).execute()
 except Exception:
-    _conn_ok = False
-st.info("Connected to Supabase" if _conn_ok else "Cannot reach Supabase — check URL/key and RLS.")
+    st.warning("⚠️ Supabase connection failed. Check URL and key.")
+
 
 # --------------------------------------------------
 # Data model: Buildings (KV) — keep user's order
@@ -163,14 +162,278 @@ def buildings_table(load: dict[str, dict[str, Any]]):
 PAGES = ["Dashboard", "Buildings", "Heroes", "Add or Update Hero"]
 with st.sidebar:
     st.title("LastWarHeros")
-    page = st.radio("Navigate", PAGES, index=1)  # land on Buildings first while we build
+    page = st.radio("Navigate", PAGES, index=0)  # start on Dashboard
 
 # --------------------------------------------------
 # Pages
 # --------------------------------------------------
+# --- Drop-in helpers for Dashboard ---
+import math
+import pandas as pd
+import streamlit as st
+
+# Expect: sb (Supabase client) and DEFAULT_BUILDINGS + kv_bulk_read() already in file
+
+# Flexible resolver that can read exact keys and common aliases/typos
+ALIASES = {
+    "oil wall": "Oil Well",
+    "coil vault": "Coin Vault",
+    "farm warehouse": "Food Warehouse",
+    "tactical institute": "Technical Institute",
+    "training grounds": "Drill Ground",    # user wording vs our stored names
+}
+
+# For grouped series like "Tech Center 1-3"
+SERIES = {
+    "Tech Center": list(range(1, 4)),
+    "Barracks": list(range(1, 4+1)),
+    "Hospital": list(range(1, 4+1)),
+    "Drill Ground": list(range(1, 4+1)),
+    "Recon Plane": list(range(1, 3+1)),
+    "Gold Mine": list(range(1, 5+1)),
+    "Iron Mine": list(range(1, 5+1)),
+    "Farmland": list(range(1, 5+1)),
+    "Oil Well": list(range(1, 5+1)),
+    "Smelter": list(range(1, 5+1)),
+    "Training Base": list(range(1, 5+1)),
+    "Material Workshop": list(range(1, 5+1)),
+}
+
+# Some singletons with exact keys in KV
+SINGLES = [
+    "HQ","Wall","Emergency Center","Alert Tower","Coin Vault","Food Warehouse","Iron Warehouse",
+    "Alliance Center","Builder's Hut","Tavern","Technical Institute","Drone Parts Workshop","Chip Lab","Component Factory","Gear Factory"
+]
+
+
+def get_level(kv: dict, name: str) -> int:
+    # resolve alias
+    n = ALIASES.get(name.lower(), name)
+    row = kv.get(n)
+    if row is None:
+        return 0
+    v = row.get("value")
+    try:
+        return int(v) if v not in (None, "") else 0
+    except Exception:
+        try:
+            return int(float(str(v)))
+        except Exception:
+            return 0
+
+
+def max_series(kv: dict, base: str, rng: list[int]) -> int:
+    vals = [get_level(kv, f"{base} {i}") for i in rng]
+    return max(vals) if vals else 0
+
+
+def sum_series(kv: dict, base: str, rng: list[int]) -> int:
+    return sum(get_level(kv, f"{base} {i}") for i in rng)
+
+
+# centers mentioned in spec; if missing from KV, they will stay 0 gracefully
+CENTER_NAMES = ["Tank Center", "Aircraft Center", "Missile Center"]
+
+def max_centers(kv: dict) -> int:
+    return max([get_level(kv, c) for c in CENTER_NAMES] or [0])
+
+
+# Simple gradient utility for percentage chips
+
+def pct_chip(pct: float, label: str) -> str:
+    p = max(0, min(100, int(round(pct))))
+    # red to green gradient with black text for readability
+    return (
+        f"<div style='display:inline-block;padding:6px 10px;border-radius:12px;"
+        f"background:linear-gradient(90deg, rgba(255,120,120,1) 0%, rgba(120,200,120,1) {p}%, rgba(235,235,235,1) {p}%);"
+        f"color:black;font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,0.08);'>"
+        f"{label}{p}%"
+        f"</div>"
+    )
+
+# --- DASHBOARD --------------------------------------------------------------
 if page == "Dashboard":
-    st.header("Dashboard")
-    st.info("We'll wire this after we lock the other pages.")
+    import pandas as pd  # ensure available in this scope
+
+    cols = st.columns([1, 3])
+
+    # Load buildings once
+    kv = kv_bulk_read(DEFAULT_BUILDINGS)
+    hq = get_level(kv, "HQ")
+
+    # total hero power
+    try:
+        res = sb.table("heroes").select("power").execute()
+        arr = pd.to_numeric(pd.DataFrame(res.data or []).get("power"), errors="coerce")
+        total_power = int(arr.fillna(0).sum())
+    except Exception:
+        total_power = 0
+
+    formatted_power = f"{total_power:,}"
+
+    with cols[0]:
+        try:
+            st.image("frog.png", width=160)
+        except Exception:
+            st.write(":frog: (frog.png not found)")
+
+    with cols[1]:
+        html = f"""
+        <div style='display:flex; align-items:center; height:160px;'>
+            <div style='margin-left:15px;'>
+                <h2 style='margin:0; font-weight:700;'>Shōckwave [FER]</h2>
+                <div style='font-size:1.1rem; margin-top:6px;'>
+                    <strong>HQ Level:</strong>
+                    <span style='font-weight:700; font-size:1.2rem;'>{hq}</span>
+                    &nbsp;&nbsp;&nbsp;
+                    <strong>Total Hero Power:</strong>
+                    <span style='font-weight:700; font-size:1.2rem;'>{formatted_power}</span>
+                </div>
+            </div>
+        </div>
+        """
+        st.markdown(html, unsafe_allow_html=True)
+
+    st.divider()
+    st.subheader("Teams")
+
+    team_opts = ["Tank", "Air", "Missile", "Mixed"]
+
+    def team_row(i: int):
+        # narrow select, narrow power, big spacer to keep everything left
+        sel_col, pow_col, _spacer = st.columns([1.2, 0.9, 10])
+        with sel_col:
+            st.selectbox(
+                f"Team {i}",
+                team_opts,
+                index=0,
+                key=f"team_{i}_type",
+                label_visibility="visible",
+            )
+        with pow_col:
+            st.text_input(
+                "Power",
+                key=f"team_{i}_power",
+                max_chars=6,             # e.g., 32.46M
+                placeholder="32.46M",
+                label_visibility="visible",
+            )
+
+    for i in range(1, 4):
+        team_row(i)
+
+
+    st.divider()
+    st.subheader("Buildings")
+
+    # --- First row (4 columns): raw values ---
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown("**Wall**")
+        st.write(get_level(kv, "Wall"))
+        st.markdown("**Tech Center**")
+        st.write(max_series(kv, "Tech Center", SERIES["Tech Center"]))
+        st.markdown("**Tank/Air/Missile Center**")
+        st.write(max_centers(kv))
+    with c2:
+        st.markdown("**Barracks**")
+        st.write(max_series(kv, "Barracks", SERIES["Barracks"]))
+        st.markdown("**Hospital**")
+        st.write(max_series(kv, "Hospital", SERIES["Hospital"]))
+        st.markdown("**Training Grounds**")
+        st.write(max_series(kv, "Drill Ground", SERIES["Drill Ground"]))
+    with c3:
+        st.empty()
+    with c4:
+        st.empty()
+
+    st.write("")
+
+    # --- Second row: percentages vs HQ with gradient chips ---
+    c1, c2, c3, c4 = st.columns(4)
+
+    def pct_of_hq_sum(base: str, series_key: str) -> float:
+        if hq <= 0:
+            return 0.0
+        rng = SERIES[series_key]
+        total = sum_series(kv, base, rng)
+        denom = len(rng) * hq
+        return (total / denom) * 100.0 if denom > 0 else 0.0
+
+    def pct_of_hq_single(name: str) -> float:
+        if hq <= 0:
+            return 0.0
+        return (get_level(kv, name) / hq) * 100.0
+
+    with c1:
+        st.markdown("**Tech Center**")
+        st.markdown(pct_chip(pct_of_hq_sum("Tech Center", "Tech Center"), ""), unsafe_allow_html=True)
+        st.markdown("**Tank/Air/Missile**")
+        p_centers = 0.0
+        present = [c for c in CENTER_NAMES if c in kv]
+        if hq > 0 and present:
+            s = sum(get_level(kv, c) for c in present)
+            p_centers = (s / (len(present) * hq)) * 100.0
+        st.markdown(pct_chip(p_centers, ""), unsafe_allow_html=True)
+        st.markdown("**Barracks**")
+        st.markdown(pct_chip(pct_of_hq_sum("Barracks", "Barracks"), ""), unsafe_allow_html=True)
+        st.markdown("**Hospital**")
+        st.markdown(pct_chip(pct_of_hq_sum("Hospital", "Hospital"), ""), unsafe_allow_html=True)
+        st.markdown("**Training Grounds**")
+        st.markdown(pct_chip(pct_of_hq_sum("Drill Ground", "Drill Ground"), ""), unsafe_allow_html=True)
+        st.markdown("**Emergency Center**")
+        st.markdown(pct_chip(pct_of_hq_single("Emergency Center"), ""), unsafe_allow_html=True)
+        st.markdown("**Squads**")
+        st.markdown(pct_chip(pct_of_hq_sum("Drill Ground", "Drill Ground"), ""), unsafe_allow_html=True)
+        st.markdown("**Alert Tower**")
+        st.markdown(pct_chip(pct_of_hq_single("Alert Tower"), ""), unsafe_allow_html=True)
+        st.markdown("**Recon Plane**")
+        st.markdown(pct_chip(pct_of_hq_sum("Recon Plane", "Recon Plane"), ""), unsafe_allow_html=True)
+
+    with c2:
+        st.markdown("**Coin Vault**")
+        st.markdown(pct_chip(pct_of_hq_single("Coin Vault"), ""), unsafe_allow_html=True)
+        st.markdown("**Iron Warehouse**")
+        st.markdown(pct_chip(pct_of_hq_single("Iron Warehouse"), ""), unsafe_allow_html=True)
+        st.markdown("**Food Warehouse**")
+        st.markdown(pct_chip(pct_of_hq_single("Food Warehouse"), ""), unsafe_allow_html=True)
+        st.markdown("**Oil Well**")
+        st.markdown(pct_chip(pct_of_hq_sum("Oil Well", "Oil Well"), ""), unsafe_allow_html=True)
+        st.markdown("**Gold Mine**")
+        st.markdown(pct_chip(pct_of_hq_sum("Gold Mine", "Gold Mine"), ""), unsafe_allow_html=True)
+        st.markdown("**Iron Mine**")
+        st.markdown(pct_chip(pct_of_hq_sum("Iron Mine", "Iron Mine"), ""), unsafe_allow_html=True)
+        st.markdown("**Farmland**")
+        st.markdown(pct_chip(pct_of_hq_sum("Farmland", "Farmland"), ""), unsafe_allow_html=True)
+        st.markdown("**Smelter**")
+        st.markdown(pct_chip(pct_of_hq_sum("Smelter", "Smelter"), ""), unsafe_allow_html=True)
+
+    with c3:
+        st.markdown("**Alliance Center**")
+        st.markdown(pct_chip(pct_of_hq_single("Alliance Center"), ""), unsafe_allow_html=True)
+        st.markdown("**Builder's Hut**")
+        st.markdown(pct_chip(pct_of_hq_single("Builder's Hut"), ""), unsafe_allow_html=True)
+        st.markdown("**Tavern**")
+        st.markdown(pct_chip(pct_of_hq_single("Tavern"), ""), unsafe_allow_html=True)
+        st.markdown("**Technical Institute**")
+        st.markdown(pct_chip(pct_of_hq_single("Technical Institute"), ""), unsafe_allow_html=True)
+        st.markdown("**Training Base**")
+        st.markdown(pct_chip(pct_of_hq_sum("Training Base", "Training Base"), ""), unsafe_allow_html=True)
+
+    with c4:
+        st.markdown("**Drone Parts Workshop**")
+        st.markdown(pct_chip(pct_of_hq_single("Drone Parts Workshop"), ""), unsafe_allow_html=True)
+        st.markdown("**Chip Lab**")
+        st.markdown(pct_chip(pct_of_hq_single("Chip Lab"), ""), unsafe_allow_html=True)
+        st.markdown("**Component Factory**")
+        st.markdown(pct_chip(pct_of_hq_single("Component Factory"), ""), unsafe_allow_html=True)
+        st.markdown("**Gear Factory**")
+        st.markdown(pct_chip(pct_of_hq_single("Gear Factory"), ""), unsafe_allow_html=True)
+        st.markdown("**Material Workshop**")
+        st.markdown(pct_chip(pct_of_hq_sum("Material Workshop", "Material Workshop"), ""), unsafe_allow_html=True)
+# --- END DASHBOARD ----------------------------------------------------------
+
+
 
 elif page == "Buildings":
     st.header("Buildings")
@@ -420,4 +683,4 @@ elif page == "Add or Update Hero":
 # --------------------------------------------------
 # Footer
 # --------------------------------------------------
-st.caption("Source of truth: Supabase buildings_kv. This page uses a table with explicit 'Save changes' to avoid accidental writes.")
+st.caption("Made with love. Drink a beer.")
