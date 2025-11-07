@@ -156,10 +156,79 @@ def buildings_table(load: dict[str, dict[str, Any]]):
             st.session_state.pop("bld_table", None)
             st.rerun()
 
+# -------------------- Research helpers --------------------
+RESEARCH_CATEGORIES = [
+    "Development",
+    "Economy",
+    "Hero",
+    "Units",
+    "Squad 1",
+    "Squad 2",
+    "Squad 3",
+    "Squad 4",
+    "Alliance Duel",
+    "Intercity Truck",
+    "Tank Mastery",
+    "Missile Mastery",
+    "Air Mastery",
+    "The Age of Oil",
+    "Tactical Weapon",
+]
+
+def research_load(category: str):
+    """Return a DataFrame of rows for a category, columns: name, level, max_level."""
+    import pandas as pd
+    try:
+        res = sb.table("research_data").select("id, name, level, max_level").eq("category", category).order("name").execute()
+        rows = res.data or []
+    except Exception:
+        rows = []
+    df = pd.DataFrame(rows)
+    if df.empty:
+        df = pd.DataFrame(columns=["id", "name", "level", "max_level"])
+    # type safety
+    for c in ["level", "max_level"]:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
+    return df
+
+def research_save(category: str, edited_df):
+    """Upsert changed rows for a category. Allows new rows without id."""
+    payload = []
+    for _, r in edited_df.iterrows():
+        name = str(r.get("name", "")).strip()
+        if not name:
+            continue
+        lvl = int(r.get("level", 0) or 0)
+        maxlvl = int(r.get("max_level", 0) or 0)
+        row = {
+            "category": category,
+            "name": name,
+            "level": lvl,
+            "max_level": maxlvl if maxlvl > 0 else 10,
+        }
+        # keep id if present to update the same row
+        rid = r.get("id")
+        if isinstance(rid, str) and len(rid) > 0:
+            row["id"] = rid
+        payload.append(row)
+    if payload:
+        sb.table("research_data").upsert(payload).execute()
+
+def research_completion(df) -> float:
+    """Return percent completion for a category: avg(level / max_level) * 100."""
+    import pandas as pd
+    if df is None or df.empty:
+        return 0.0
+    levels = pd.to_numeric(df.get("level"), errors="coerce").fillna(0)
+    maxes  = pd.to_numeric(df.get("max_level"), errors="coerce").replace(0, pd.NA)
+    frac = (levels / maxes).fillna(0)
+    return float(round(frac.mean() * 100, 1)) if len(frac) else 0.0
+
 # --------------------------------------------------
 # Navigation
 # --------------------------------------------------
-PAGES = ["Dashboard", "Buildings", "Heroes", "Add or Update Hero"]
+PAGES = ["Dashboard", "Buildings", "Heroes", "Add or Update Hero", "Research"]
 with st.sidebar:
     st.title("LastWarHeros")
     page = st.radio("Navigate", PAGES, index=0)  # start on Dashboard
@@ -679,6 +748,59 @@ elif page == "Add or Update Hero":
                     except Exception as e:
                         st.error(f"Delete failed: {e}")
 
+#----- Research Pages
+elif page == "Research":
+    import pandas as pd
+    st.header("Research")
+
+    st.caption("Click a category to expand. Add rows if needed. Edit Level or Max Level, then Save changes.")
+
+    for cat in RESEARCH_CATEGORIES:
+        with st.expander(cat, expanded=(cat == "Hero")):
+            df = research_load(cat)
+
+            # Show completion up top
+            pct = research_completion(df)
+            st.markdown(f"**Tree Completion:** {pct:.1f}%")
+
+            # Editable table
+            # Columns: name, level, max_level. Keep id hidden so upserts update the same row when present.
+            if "id" not in df.columns:
+                df["id"] = ""
+            # Order columns for the editor
+            show = df[["name", "level", "max_level", "id"]] if not df.empty else pd.DataFrame(columns=["name", "level", "max_level", "id"])
+
+            edited = st.data_editor(
+                show,
+                num_rows="dynamic",       # allow adding new lines
+                use_container_width=True,
+                column_config={
+                    "name": st.column_config.TextColumn("Research Name", width="large", required=True),
+                    "level": st.column_config.NumberColumn("Level", min_value=0, max_value=999, step=1),
+                    "max_level": st.column_config.NumberColumn("Max Level", min_value=1, max_value=999, step=1),
+                    "id": st.column_config.Column("id", disabled=True, width="small"),
+                },
+                hide_index=True,
+                key=f"research_editor_{cat}",
+            )
+
+            # Footer with actions and live completion preview
+            colA, colB, colC = st.columns([1, 1, 6])
+            with colA:
+                if st.button("Save changes", key=f"save_{cat}", type="primary", use_container_width=True):
+                    try:
+                        research_save(cat, edited)
+                        st.success("Saved")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Save failed: {e}")
+            with colB:
+                if st.button("Reload", key=f"reload_{cat}", use_container_width=True):
+                    st.rerun()
+            with colC:
+                # Preview updated completion on the edited grid
+                preview_pct = research_completion(edited)
+                st.markdown(f"**Preview Completion:** {preview_pct:.1f}%")
 
 # --------------------------------------------------
 # Footer
