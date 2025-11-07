@@ -1,272 +1,303 @@
+import os
+from typing import Dict, Any, List, Tuple, Optional
+from datetime import datetime
+
 import streamlit as st
 from supabase import create_client, Client
-from typing import Dict, Any, Tuple, Optional
-from datetime import datetime
-import os
 
-# ---------------------------------------------
-# Setup
-# ---------------------------------------------
-st.set_page_config(page_title="LastWarHeros Dashboard", page_icon="🛡️", layout="wide")
+# --------------------------------------------------
+# App config
+# --------------------------------------------------
+st.set_page_config(page_title="LastWarHeros v2", page_icon="🛡️", layout="wide")
 
+# --------------------------------------------------
+# Supabase client
+# --------------------------------------------------
 @st.cache_resource(show_spinner=False)
 def get_supabase() -> Client:
-    url = st.secrets["supabase"]["url"]
-    key = st.secrets["supabase"]["anon_key"]
+    url = None
+    key = None
+    try:
+        if "supabase" in st.secrets:
+            sec = st.secrets["supabase"]
+            url = sec.get("url")
+            key = sec.get("anon_key")
+    except Exception:
+        pass
+    url = url or os.environ.get("SUPABASE_URL")
+    key = key or os.environ.get("SUPABASE_ANON_KEY")
+    if not url or not key:
+        st.error("Missing Supabase credentials. Add to .streamlit/secrets.toml or set SUPABASE_URL / SUPABASE_ANON_KEY.")
+        st.stop()
     return create_client(url, key)
 
-sb = get_supabase()
+sb: Client = get_supabase()
 
-# Connection status banner
+# Connection banner
 _conn_ok = True
 try:
     sb.table("buildings_kv").select("key").limit(1).execute()
-except Exception as _e:
+except Exception:
     _conn_ok = False
+st.info("Connected to Supabase" if _conn_ok else "Cannot reach Supabase — check URL/key and RLS.")
 
-if _conn_ok:
-    st.success("Connected to Supabase")
-else:
-    st.error("Cannot reach Supabase. Check URL/key and table permissions.")
+# --------------------------------------------------
+# Data model: Buildings (KV) — keep user's order
+# --------------------------------------------------
+from collections import OrderedDict
 
-# ---------------------------------------------
-# Constants and helpers
-# ---------------------------------------------
-# Source of truth is the buildings_kv table
-# Expected schema:
-#   key: text primary key
-#   value: text
-#   updated_at: timestamptz default now() with trigger to update on change
-# Helpful SQL if needed:
-#   create table if not exists public.buildings_kv (
-#     key text primary key,
-#     value text,
-#     updated_at timestamptz not null default now()
-#   );
-#   create extension if not exists moddatetime;
-#   create trigger set_buildings_kv_updated
-#   before update on public.buildings_kv
-#   for each row execute procedure moddatetime(updated_at);
-
-DEFAULT_BUILDINGS = [
-    "HQ","Wall","Oil Well","Iron Mine","Farm","Barracks","Garage","Airfield",
-    "Missile Silo","Research Lab","Radar","Hospital","Warehouse","Power Plant"
+base_buildings = [
+    "HQ", "Wall",
+    "Tech Center 1-3",
+    "Barracks 1-4", "Barrack 2",
+    "Drill Ground 1-4",
+    "Hospital 1-4", "Emergency Center",
+    "Alert Tower", "Recon Plane 1-3",
+    "Coin Vault", "Food Warehouse", "Iron Warehouse",
+    "Gold Mine 1-5", "Iron Mine 1-5", "Farmland 1-5", "Oil Well 1-5",
+    "Smelter 1-5", "Training Base 1-5", "Material Workshop 1-5",
+    "Alliance Center", "Builder's Hut", "Tavern", "Technical Institute",
+    "Drone Parts Workshop", "Chip Lab", "Component Factory", "Gear Factory",
 ]
 
-# Minimal password gate for non public pages
+def expand_ranges_in_order(names: list[str]) -> list[str]:
+    out: list[str] = []
+    for n in names:
+        parts = n.rsplit(" ", 1)
+        if len(parts) == 2 and "-" in parts[1]:
+            head, rng = parts[0], parts[1]
+            try:
+                lo, hi = [int(x) for x in rng.split("-")]
+                for i in range(lo, hi + 1):
+                    out.append(f"{head} {i}")
+            except Exception:
+                out.append(n)
+        else:
+            out.append(n)
+    return out
 
-def _get_app_password() -> str | None:
-    # Prefer Streamlit secrets -> then environment variable
-    val = None
-    try:
-        # use .get to avoid KeyError; strip whitespace to avoid invisible mismatch
-        val = st.secrets.get("app_password", None)
-    except Exception:
-        val = None
-    env_val = os.environ.get("APP_PASSWORD")
-    # normalize by stripping whitespace if present
-    val = val.strip() if isinstance(val, str) else val
-    env_val = env_val.strip() if isinstance(env_val, str) else env_val
-    return val or env_val
+DEFAULT_BUILDINGS: list[str] = expand_ranges_in_order(base_buildings)
 
+# --------------------------------------------------
+# KV helpers
+# --------------------------------------------------
 
-def require_auth() -> bool:
-    if "authed" not in st.session_state:
-        st.session_state.authed = False
-    if st.session_state.authed:
-        return True
-    app_pw = _get_app_password()
-    with st.sidebar:
-        st.markdown("### Admin access")
-        if not app_pw:
-            st.warning("No admin password configured. Set app_password in secrets.toml or APP_PASSWORD env var.")
-        pwd = st.text_input("Password", type="password", key="pwd_input")
-        if st.button("Unlock"):
-            # normalize user input to avoid whitespace issues
-            user_pw = (pwd or "").strip()
-            if app_pw and user_pw == app_pw:
-                st.session_state.authed = True
-                st.experimental_rerun()
-            else:
-                st.error("Incorrect password")
-        with st.expander("Diagnostics (safe)"):
-            st.caption("Shows where credentials are loaded from (no secrets shown).")
-            st.write({
-                "secrets_found": bool(st.secrets),
-                "app_password_from_secrets": bool(st.secrets.get("app_password", None)),
-                "app_password_from_env": bool(os.environ.get("APP_PASSWORD")),
-            })
-    return st.session_state.authed
+def kv_bulk_read(keys: list[str]) -> dict[str, dict[str, Any]]:
+    """Return mapping in the *same order* as `keys`."""
+    # Fetch all existing rows at once
+    rows = sb.table("buildings_kv").select("key,value,updated_at").in_("key", keys).execute().data or []
+    by_key = {r["key"]: r for r in rows}
+    ordered: dict[str, dict[str, Any]] = OrderedDict()
+    for k in keys:
+        r = by_key.get(k)
+        if r:
+            ordered[k] = {"value": r.get("value"), "updated_at": r.get("updated_at")}
+        else:
+            ordered[k] = {"value": None, "updated_at": None}
+    return ordered
 
-# KV accessors
-
-def kv_get(key: str) -> Tuple[Optional[str], Optional[str]]:
-    """Return (value, updated_at_iso) for the key, or (None, None) if missing."""
-    res = sb.table("buildings_kv").select("value,updated_at").eq("key", key).maybe_single().execute()
-    data = res.data
-    if not data:
-        return None, None
-    return data.get("value"), data.get("updated_at")
+def kv_bulk_upsert(rows: List[Dict[str, Any]]) -> None:
+    if rows:
+        sb.table("buildings_kv").upsert(rows).execute()
 
 
-def kv_set_if_fresh(key: str, new_value: str, expected_updated_at: Optional[str]) -> Tuple[bool, Optional[str]]:
-    """Optimistic update. Returns (success, new_updated_at). If expected_updated_at is None, performs upsert."""
-    if expected_updated_at:
-        # Conditional update. Only update when updated_at matches.
-        res = sb.table("buildings_kv").update({"value": new_value}).eq("key", key).eq("updated_at", expected_updated_at).execute()
-        if res.data:
-            # Fetch the latest updated_at
-            v, ts = kv_get(key)
-            return True, ts
-        return False, None
-    else:
-        # First write or missing timestamp, do upsert
-        res = sb.table("buildings_kv").upsert({"key": key, "value": new_value}).execute()
-        v, ts = kv_get(key)
-        return True, ts
-
-
-def kv_bulk_read(keys: list[str]) -> Dict[str, Dict[str, Any]]:
-    """Return {key: {value: str|None, updated_at: str|None}} for all keys."""
-    # Supabase allows an in_ filter but it can be limited. For small lists this is fine.
-    results: Dict[str, Dict[str, Any]] = {k: {"value": None, "updated_at": None} for k in keys}
-    if not keys:
-        return results
-    res = sb.table("buildings_kv").select("key,value,updated_at").in_("key", keys).execute()
-    for row in res.data or []:
-        results[row["key"]] = {"value": row.get("value"), "updated_at": row.get("updated_at")}
-    return results
-
-# ---------------------------------------------
-# UI utilities
-# ---------------------------------------------
-
-def init_widget_once(key: str, default: str):
-    flag = f"_inited_{key}"
-    if not st.session_state.get(flag, False):
-        st.session_state[key] = default
-        st.session_state[flag] = True
-
-
-def level_as_int_str(v: Optional[str]) -> str:
+def to_int(v: Optional[str]) -> int:
     try:
         if v is None or v == "":
-            return "0"
-        return str(int(v))
+            return 0
+        return int(v)
     except Exception:
-        return "0"
+        return 0
 
+# --------------------------------------------------
+# UI helpers
+# --------------------------------------------------
 
-def percentage_chip(label: str, current: int, target: int = 40):
-    pct = 0 if target == 0 else int(round(min(100, max(0, (current / target) * 100))))
-    # gradient chip with black text
-    st.markdown(
-        f"<div style='display:inline-block;padding:6px 10px;border-radius:16px;"
-        f"background:linear-gradient(90deg, rgba(255,255,255,1) 0%, rgba(180,220,255,1) {pct}%, rgba(240,240,240,1) {pct}%);"
-        f"box-shadow:0 1px 4px rgba(0,0,0,0.08);font-weight:600;'>"
-        f"{label}: {current}/{target} · {pct}%"
-        f"</div>", unsafe_allow_html=True
+def buildings_table(load: dict[str, dict[str, Any]]):
+    import pandas as pd
+
+    # Build rows in the exact DEFAULT_BUILDINGS order
+    data = [{"Name": name, "Level": to_int(load[name]["value"])} for name in load.keys()]
+
+    df = pd.DataFrame(data)  # keep provided order; do NOT sort here
+
+    st.caption("Edit levels below. Changes are not saved until you click 'Save changes'.")
+    edited = st.data_editor(
+        df,
+        num_rows="fixed",
+        use_container_width=True,
+        column_config={
+            "Name": st.column_config.Column(disabled=True),
+            "Level": st.column_config.NumberColumn(min_value=0, max_value=200, step=1),
+        },
+        key="bld_table",
     )
 
+    # Diff against original
+    changed_rows: List[Dict[str, Any]] = []
+    for idx, row in edited.iterrows():
+        name = row["Name"]
+        new_level = int(row["Level"]) if row["Level"] is not None else 0
+        old_level = to_int(load[name]["value"]) if name in load else 0
+        if new_level != old_level:
+            changed_rows.append({"key": name, "value": str(new_level)})
 
-def building_editor(name: str, row: Dict[str, Any]):
-    col1, col2, col3 = st.columns([2, 2, 1])
-    stored_val = level_as_int_str(row.get("value"))
-    updated_at = row.get("updated_at")
-
+    col1, col2 = st.columns([1,1])
     with col1:
-        st.caption("Stored level")
-        st.markdown(f"**{name} {stored_val}**")
+        if st.button("Save changes", type="primary", use_container_width=True, disabled=(len(changed_rows) == 0)):
+            try:
+                kv_bulk_upsert(changed_rows)
+                st.success(f"Saved {len(changed_rows)} change(s).")
+                st.session_state.pop("bld_table", None)  # force reload on next run
+                st.rerun()
+            except Exception as e:
+                st.error(f"Save failed: {e}")
     with col2:
-        key = f"level_{name}"
-        init_widget_once(key, stored_val)
-        def _save_change():
-            new_val = st.session_state.get(key, "0")
-            ok, new_ts = kv_set_if_fresh(name, str(int(new_val) if new_val != "" else 0), updated_at)
-            if ok:
-                st.session_state[f"_inited_{key}"] = False  # force reload to reflect latest stored value next run
-                st.toast(f"Saved {name} = {new_val}")
-            else:
-                st.warning(f"{name} changed in another window. Reloaded the latest value.")
-                st.session_state[f"_inited_{key}"] = False
-        st.text_input("Edit level", key=key, on_change=_save_change)
-    with col3:
-        if st.button("Reset", key=f"reset_{name}"):
-            st.session_state[f"_inited_level_{name}"] = False
-            st.session_state[f"level_{name}"] = stored_val
-            st.toast(f"Reverted {name}")
+        if st.button("Reload from Supabase", use_container_width=True):
+            st.session_state.pop("bld_table", None)
+            st.rerun()
 
-
-# ---------------------------------------------
+# --------------------------------------------------
 # Navigation
-# ---------------------------------------------
-PAGES = ["Dashboard", "Heroes", "Add or Update Hero", "Buildings"]  # keep Buildings available while default order preference is honored
-
+# --------------------------------------------------
+PAGES = ["Dashboard", "Buildings", "Heroes", "Add or Update Hero"]
 with st.sidebar:
     st.title("LastWarHeros")
-    page = st.radio("Navigate", PAGES, index=0)
-    if st.button("Sync from Supabase"):
-        # Clear all init flags to force widgets to rebind from KV
-        for k in list(st.session_state.keys()):
-            if k.startswith("_inited_"):
-                st.session_state[k] = False
-        st.toast("Synced latest values")
+    page = st.radio("Navigate", PAGES, index=1)  # land on Buildings first while we build
 
-# ---------------------------------------------
+# --------------------------------------------------
 # Pages
-# ---------------------------------------------
-
+# --------------------------------------------------
 if page == "Dashboard":
     st.header("Dashboard")
-    st.write("This dashboard reads from buildings_kv for all building levels.")
-
-    kv = kv_bulk_read(DEFAULT_BUILDINGS)
-
-    # Percentage chips row
-    chip_cols = st.columns(4)
-    for i, name in enumerate(DEFAULT_BUILDINGS[:8]):
-        with chip_cols[i % 4]:
-            current = int(level_as_int_str(kv[name]["value"]))
-            percentage_chip(name, current, 40)
-
-    st.divider()
-    st.subheader("Quick edit")
-    grid = st.columns(2)
-    left_names = DEFAULT_BUILDINGS[::2]
-    right_names = DEFAULT_BUILDINGS[1::2]
-    with grid[0]:
-        for n in left_names:
-            building_editor(n, kv[n])
-    with grid[1]:
-        for n in right_names:
-            building_editor(n, kv[n])
+    st.info("We'll wire this after we lock the other pages.")
 
 elif page == "Buildings":
     st.header("Buildings")
-    st.write("All fields autosave to buildings_kv and show the stored level next to the name.")
-
-    kv = kv_bulk_read(DEFAULT_BUILDINGS)
-
-    for name in DEFAULT_BUILDINGS:
-        with st.container(border=True):
-            building_editor(name, kv[name])
+    st.write("Standard table. Only updates rows you actually change. No undo/redo.")
+    # Load current values
+    current = kv_bulk_read(DEFAULT_BUILDINGS)
+    buildings_table(current)
 
 elif page == "Heroes":
-    if not require_auth():
-        st.stop()
     st.header("Heroes")
-    st.info("Heroes management is gated. Build your UI here.")
+    st.write("Sorted by Power (desc). Role-based highlights + green 5-star override + clean numbers.")
+
+    try:
+        cols = (
+            "id,name,level,power,"
+            "rail_gun,rail_gun_stars,armor,armor_stars,data_chip,data_chip_stars,radar,radar_stars,"
+            "weapon,weapon_level,max_skill_level,skill1,skill2,skill3,"
+            "type,role,team,updated_at"
+        )
+
+        res = sb.table("heroes").select(cols).order("power", desc=True).execute()
+        rows = res.data or []
+        if not rows:
+            st.warning("No heroes found in table 'heroes'.")
+        else:
+            import pandas as pd
+            df = pd.DataFrame(rows)
+
+            # numeric coercions
+            num_cols = ["power","level","rail_gun","armor","data_chip","radar",
+                        "weapon_level","max_skill_level","skill1","skill2","skill3"]
+            for c in num_cols:
+                if c in df.columns:
+                    df[c] = pd.to_numeric(df[c], errors="coerce")
+
+            # final sort by power desc
+            if "power" in df.columns:
+                df = df.sort_values("power", ascending=False, na_position="last")
+
+            display_cols = [c for c in [
+                "name","power","level","type","role","team",
+                "rail_gun","rail_gun_stars","armor","armor_stars",
+                "data_chip","data_chip_stars","radar","radar_stars",
+                "weapon","weapon_level","max_skill_level","skill1","skill2","skill3",
+                "updated_at"
+            ] if c in df.columns]
+            df_show = df[display_cols].copy()
+
+            # Role → orange mapping
+            role_orange = {
+                "attack":  ["rail_gun","data_chip"],
+                "defense": ["armor","radar"],
+                "support": ["rail_gun","radar"],
+            }
+            # Base/stat pairs for 5-star override
+            star_pairs = [
+                ("rail_gun", "rail_gun_stars"),
+                ("armor", "armor_stars"),
+                ("data_chip", "data_chip_stars"),
+                ("radar", "radar_stars"),
+            ]
+
+            ORANGE = "background-color: orange; font-weight: 600;"
+            GREEN  = "background-color: #22c55e; color: black; font-weight: 700;"
+
+            def style_cells(df_in: pd.DataFrame) -> pd.DataFrame:
+                styles = pd.DataFrame('', index=df_in.index, columns=df_in.columns)
+
+                # 1) apply role-based orange
+                roles = df_in.get("role")
+                if roles is not None:
+                    roles = roles.astype(str).str.lower().fillna("")
+                    for idx, role in roles.items():
+                        cols_to_paint = role_orange.get(role, [])
+                        for col in cols_to_paint:
+                            if col in styles.columns:
+                                styles.loc[idx, col] = ORANGE
+                            # paint *_stars alongside base if present
+                            star_col = f"{col}_stars"
+                            if star_col in styles.columns:
+                                styles.loc[idx, star_col] = ORANGE
+
+                # 2) override with green for 5-star rows
+                for base, stars in star_pairs:
+                    if stars in df_in.columns:
+                        # stars columns are text in schema; coerce to number
+                        s_num = pd.to_numeric(df_in[stars], errors="coerce")
+                        five_mask = s_num >= 5  # catches 5 or 5.0
+                        idxs = df_in.index[five_mask.fillna(False)]
+                        for i in idxs:
+                            if base in styles.columns:
+                                styles.loc[i, base] = GREEN
+                            if stars in styles.columns:
+                                styles.loc[i, stars] = GREEN
+
+                return styles
+
+            # clean number formatting (no long decimal tails)
+            def fmt_int(x):
+                try:
+                    if x is None or (isinstance(x, float) and pd.isna(x)):
+                        return ""
+                    return f"{int(round(float(x)))}"
+                except Exception:
+                    return x
+
+            fmt = {}
+            for c in ["power","level","rail_gun","armor","data_chip","radar",
+                      "weapon_level","max_skill_level","skill1","skill2","skill3"]:
+                if c in df_show.columns:
+                    fmt[c] = fmt_int
+
+            try:
+                styled = df_show.style.apply(lambda _df: style_cells(df_show), axis=None).format(fmt)
+                st.dataframe(styled, use_container_width=True)
+            except Exception:
+                st.dataframe(df_show, use_container_width=True)
+
+    except Exception as e:
+        st.error("Could not load heroes (check table name/columns).")
+        st.code(str(e))
 
 elif page == "Add or Update Hero":
-    if not require_auth():
-        st.stop()
     st.header("Add or Update Hero")
-    name = st.text_input("Hero name")
-    role = st.text_input("Role")
-    if st.button("Save hero"):
-        st.success(f"Saved hero {name} as {role} (placeholder)")
+    st.info("Once you confirm the Heroes table schema, we will build this form to match and persist to Supabase.")
 
-# ---------------------------------------------
+# --------------------------------------------------
 # Footer
-# ---------------------------------------------
-st.caption("Data source: Supabase buildings_kv. UI uses per field autosave with optimistic locking to avoid accidental overwrites.")
+# --------------------------------------------------
+st.caption("Source of truth: Supabase buildings_kv. This page uses a table with explicit 'Save changes' to avoid accidental writes.")
