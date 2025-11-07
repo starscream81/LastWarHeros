@@ -756,8 +756,22 @@ elif page == "Research":
     st.caption("Click a category to expand. Add rows if needed. Edit Level or Max Level, then Save changes.")
 
     for cat in RESEARCH_CATEGORIES:
-        with st.expander(cat, expanded=(cat == "Hero")):
-            df = research_load(cat)
+        df = research_load(cat)
+        pct = research_completion(df)
+
+        # Choose color indicator
+        if pct >= 90:
+            icon = "🟢"
+        elif pct >= 50:
+            icon = "🟠"
+        else:
+            icon = "🔴"
+
+        label = f"{icon} {cat} — {pct:.1f}% complete"
+
+        with st.expander(label, expanded=False):  # all start collapsed
+            st.markdown(f"**Tree Completion:** {pct:.1f}%")
+
 
             # Show completion up top
             pct = research_completion(df)
