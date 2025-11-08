@@ -695,7 +695,7 @@ RESEARCH_CATEGORIES = [
     "Squad 4",
     "Alliance Duel",
     "Intercity Truck",
-    "Special Forces"
+    "Special Forces",
     "Tank Mastery",
     "Missile Mastery",
     "Air Mastery",
