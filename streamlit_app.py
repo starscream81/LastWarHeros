@@ -760,10 +760,19 @@ def research_completion(df) -> float:
     import pandas as pd
     if df is None or df.empty:
         return 0.0
+
     levels = pd.to_numeric(df.get("level"), errors="coerce").fillna(0)
-    maxes  = pd.to_numeric(df.get("max_level"), errors="coerce").replace(0, pd.NA)
-    frac = (levels / maxes).fillna(0)
-    return float(round(frac.mean() * 100, 1)) if len(frac) else 0.0
+    maxes  = pd.to_numeric(df.get("max_level"), errors="coerce")
+
+    # ignore invalid/zero max levels
+    maxes = maxes.where(maxes > 0)
+
+    # per-row fraction, clamped to [0, 1]
+    frac = (levels / maxes).clip(lower=0, upper=1)
+
+    # mean over valid rows only
+    pct = float(frac.mean(skipna=True) * 100.0)
+    return round(pct, 1)
 
 # ---- Session-only tracking (checkbox) — does NOT touch DB
 TRACK_STATE_KEY = "research_tracking"  # {category: set([names])}
