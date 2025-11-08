@@ -498,9 +498,16 @@ elif page == "Buildings":
     st.header("Buildings")
     st.write("Standard table. Only updates rows you actually change. No undo/redo.")
 
-    # Load current building KV into a DataFrame (ordered by DEFAULT_BUILDINGS)
-    current = kv_bulk_read(DEFAULT_BUILDINGS)
-    rows = [{"name": b, "level": int(current.get(b, 0) or 0)} for b in DEFAULT_BUILDINGS]
+      # Load current building KV into a DataFrame (ordered by DEFAULT_BUILDINGS)
+    rows = []
+    for b in DEFAULT_BUILDINGS:
+        # kv_get returns a string; coerce safely to int
+        v = kv_get(b, "0")
+        try:
+            lvl = int(v)
+        except Exception:
+            lvl = 0
+        rows.append({"name": b, "level": lvl})
     df = pd.DataFrame(rows)
 
     # 🔨 / 🧱 tracking integration
