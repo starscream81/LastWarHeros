@@ -778,14 +778,24 @@ def research_save(category: str, edited_df):
 
 def research_completion(df) -> float:
     import pandas as pd
+    import numpy as np
+
     if df is None or df.empty:
         return 0.0
+
     levels = pd.to_numeric(df.get("level"), errors="coerce").fillna(0)
-    maxes  = pd.to_numeric(df.get("max_level"), errors="coerce")
-    maxes  = maxes.where(maxes > 0)
-    frac   = (levels / maxes).clip(lower=0, upper=1)
-    pct    = float(frac.mean(skipna=True) * 100.0)
-    return round(pct, 1)
+    maxes  = pd.to_numeric(df.get("max_level"), errors="coerce").fillna(0)
+
+    # valid rows only (max_level > 0)
+    valid = maxes > 0
+    if not valid.any():
+        return 0.0
+
+    # clamp levels to max_level so row completion never exceeds 100%
+    clamped = np.minimum(levels[valid], maxes[valid])
+    frac = (clamped / maxes[valid]).fillna(0)
+
+    return float(round(frac.mean() * 100, 1))
 
 # ----- DB-backed tracking (🔥 tracked, ⭐ priority) -----
 def tracking_load_sets(category: str) -> tuple[set, set]:
@@ -816,10 +826,10 @@ def tracking_save_from_editor(category: str, edited_df):
             "priority": bool(r.get("star",  False)),  # ⭐
         })
     if payload:
-        sb.table("research_tracking").upsert(
-            payload,
-            on_conflict="category,name"
-        ).execute()
+        sb.table("research_tracking") \
+            .upsert(payload, on_conflict="category,name") \
+            .execute()
+
 
 # ============================
 # Research page
