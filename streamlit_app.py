@@ -493,30 +493,32 @@ if page == "Dashboard":
 
 
 elif page == "Buildings":
+    import pandas as pd
+
     st.header("Buildings")
     st.write("Standard table. Only updates rows you actually change. No undo/redo.")
 
-    # Load current building data
+    # Load current building KV into a DataFrame (ordered by DEFAULT_BUILDINGS)
     current = kv_bulk_read(DEFAULT_BUILDINGS)
-    df = buildings_table(current)  # assumes this returns a DataFrame
+    rows = [{"name": b, "level": int(current.get(b, 0) or 0)} for b in DEFAULT_BUILDINGS]
+    df = pd.DataFrame(rows)
 
     # 🔨 / 🧱 tracking integration
     up_set, next_set = bldg_tracking_load_sets()
 
-    # Add status columns to df
-    if "hammer" not in df.columns:
+    if "hammer" not in df.columns:  # 🔨 currently upgrading
         df["hammer"] = df["name"].astype(str).isin(up_set)
-    if "brick" not in df.columns:
+    if "brick" not in df.columns:   # 🧱 next up
         df["brick"] = df["name"].astype(str).isin(next_set)
 
-    # Show quick status line
-    up_count = int(df["hammer"].sum()) if "hammer" in df.columns else 0
-    next_count = int(df["brick"].sum()) if "brick" in df.columns else 0
+    # Status line
+    up_count = int(df["hammer"].sum())
+    next_count = int(df["brick"].sum())
     if up_count or next_count:
         st.caption(f"🔨 {up_count} upgrading | 🧱 {next_count} next")
 
-    # Editable grid with tracking
-    editor_cols = ["hammer", "brick"] + [c for c in df.columns if c not in ("hammer", "brick")]
+    # Editor with 🔨/🧱 first
+    editor_cols = ["hammer", "brick", "name", "level"]
     show = df[editor_cols].copy()
 
     edited = st.data_editor(
@@ -526,15 +528,17 @@ elif page == "Buildings":
         column_config={
             "hammer": st.column_config.CheckboxColumn("🔨"),
             "brick":  st.column_config.CheckboxColumn("🧱"),
+            "name":   st.column_config.TextColumn("Building", width="large", required=True),
+            "level":  st.column_config.NumberColumn("Level", min_value=0, max_value=60, step=1),
         },
         hide_index=True,
         key="buildings_editor",
     )
 
-    # Save hammer/brick tracking to Supabase
+    # Persist 🔨/🧱 tracking (separate table)
     bldg_tracking_save_from_editor(edited)
 
-    # Optional right-aligned animated badges
+    # Optional right-aligned badges
     any_hammer = bool(edited.get("hammer").any()) if "hammer" in edited.columns else False
     any_brick  = bool(edited.get("brick").any())  if "brick"  in edited.columns else False
     if any_hammer or any_brick:
@@ -551,6 +555,31 @@ elif page == "Buildings":
         </div>
         """
         st.markdown(badges_html, unsafe_allow_html=True)
+
+    # Save / Reload buttons for levels (KV)
+    colA, colB = st.columns(2)
+    with colA:
+        if st.button("Save changes", use_container_width=True):
+            try:
+                # strip tracking columns before saving levels
+                to_save = edited[["name", "level"]].copy()
+                # compute changed keys
+                changes = []
+                for _, r in to_save.iterrows():
+                    key = r["name"]
+                    lvl = int(r.get("level", 0) or 0)
+                    if str(current.get(key, "")) != str(lvl):
+                        changes.append({"key": key, "value": str(lvl)})
+                if changes:
+                    sb.table("buildings_kv").upsert(changes).execute()
+                st.success("Saved")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Save failed: {e}")
+    with colB:
+        if st.button("Reload from Supabase", use_container_width=True):
+            st.rerun()
+
 
 
 elif page == "Heroes":
