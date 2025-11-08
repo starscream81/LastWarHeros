@@ -710,10 +710,9 @@ elif page == "Add or Update Hero":
                         st.error(f"Delete failed: {e}")
 
 # ============================
-# Research: helpers + page
+# Research helpers (top-level)
 # ============================
 
-# ---- Categories shown in the page sidebar/expanders
 RESEARCH_CATEGORIES = [
     "Development",
     "Economy",
@@ -725,9 +724,6 @@ RESEARCH_CATEGORIES = [
     "Squad 4",
     "Alliance Duel",
     "Intercity Truck",
-    "Special Forces",
-    "Siege to Seize",
-    "Defense Fortifications",
     "Tank Mastery",
     "Missile Mastery",
     "Air Mastery",
@@ -735,7 +731,6 @@ RESEARCH_CATEGORIES = [
     "Tactical Weapon",
 ]
 
-# ---- Loader: read a category from Supabase in stable order
 def research_load(category: str):
     import pandas as pd
     try:
@@ -743,27 +738,22 @@ def research_load(category: str):
             sb.table("research_data")
               .select("id, name, level, max_level, order_index")
               .eq("category", category)
-              .order("order_index")         # preserves your custom order
+              .order("order_index")
               .execute()
         )
         rows = res.data or []
     except Exception:
         rows = []
-
     df = pd.DataFrame(rows)
     if df.empty:
-        df = pd.DataFrame(columns=["id", "name", "level", "max_level", "order_index"])
-
-    # type safety
-    for c in ["level", "max_level", "order_index"]:
+        df = pd.DataFrame(columns=["id","name","level","max_level","order_index"])
+    for c in ["level","max_level","order_index"]:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
     return df
 
-# ---- Saver: upsert edited rows for a category
 def research_save(category: str, edited_df):
     payload = []
-    keep_cols = {"category", "id", "name", "level", "max_level", "order_index"}
     for _, r in edited_df.iterrows():
         name = str(r.get("name", "")).strip()
         if not name:
@@ -774,171 +764,153 @@ def research_save(category: str, edited_df):
             "level": int(r.get("level", 0) or 0),
             "max_level": int(r.get("max_level", 0) or 0) or 10,
         }
-        # keep existing id/order_index if present
-        if isinstance(r.get("id"), str) and r.get("id"):
-            row["id"] = r["id"]
+        rid = r.get("id")
+        if isinstance(rid, str) and rid:
+            row["id"] = rid
         if "order_index" in edited_df.columns and pd.notna(r.get("order_index")):
             try:
                 row["order_index"] = int(r.get("order_index"))
             except Exception:
                 pass
-        payload.append({k: v for k, v in row.items() if k in keep_cols})
-
+        payload.append(row)
     if payload:
         sb.table("research_data").upsert(payload).execute()
 
-# ---- Completion % for a DataFrame (average of level / max_level)
 def research_completion(df) -> float:
     import pandas as pd
     if df is None or df.empty:
         return 0.0
-
     levels = pd.to_numeric(df.get("level"), errors="coerce").fillna(0)
     maxes  = pd.to_numeric(df.get("max_level"), errors="coerce")
-
-    # ignore invalid/zero max levels
-    maxes = maxes.where(maxes > 0)
-
-    # per-row fraction, clamped to [0, 1]
-    frac = (levels / maxes).clip(lower=0, upper=1)
-
-    # mean over valid rows only
-    pct = float(frac.mean(skipna=True) * 100.0)
+    maxes  = maxes.where(maxes > 0)
+    frac   = (levels / maxes).clip(lower=0, upper=1)
+    pct    = float(frac.mean(skipna=True) * 100.0)
     return round(pct, 1)
 
-# ---- Session-only tracking (checkbox) — does NOT touch DB
-TRACK_STATE_KEY = "research_tracking"  # {category: set([names])}
-
-def _get_tracked_set(category: str) -> set:
-    st.session_state.setdefault(TRACK_STATE_KEY, {})
-    st.session_state[TRACK_STATE_KEY].setdefault(category, set())
-    return st.session_state[TRACK_STATE_KEY][category]
-
-def _update_tracked_from_df(category: str, df_with_track):
-    tracked = {str(r["name"]) for _, r in df_with_track.iterrows() if r.get("track", False)}
-    st.session_state[TRACK_STATE_KEY][category] = tracked
-    
-# ----- DB-backed tracking helpers -----
-def tracking_load_set(category: str) -> set:
+# ----- DB-backed tracking (🔥 tracked, ⭐ priority) -----
+def tracking_load_sets(category: str) -> tuple[set, set]:
     try:
-        res = sb.table("research_tracking")\
-                .select("name, tracked")\
-                .eq("category", category)\
-                .eq("tracked", True)\
-                .execute()
+        res = (
+            sb.table("research_tracking")
+              .select("name, tracked, priority")
+              .eq("category", category)
+              .execute()
+        )
         rows = res.data or []
-        return {r["name"] for r in rows}
+        tracked = {r["name"] for r in rows if r.get("tracked")}
+        starred = {r["name"] for r in rows if r.get("priority")}
+        return tracked, starred
     except Exception:
-        return set()
+        return set(), set()
 
 def tracking_save_from_editor(category: str, edited_df):
-    """Upsert tracking rows to persist 'track' checkbox states."""
     payload = []
     for _, r in edited_df.iterrows():
-        nm = str(r.get("name", "")).strip()
-        if not nm:
+        name = str(r.get("name", "")).strip()
+        if not name:
             continue
-        tr = bool(r.get("track", False))
-        payload.append({"category": category, "name": nm, "tracked": tr})
-
+        payload.append({
+            "category": category,
+            "name": name,
+            "tracked":  bool(r.get("track", False)),  # 🔥
+            "priority": bool(r.get("star",  False)),  # ⭐
+        })
     if payload:
-        # tell Supabase which unique columns define a row
         sb.table("research_tracking").upsert(
             payload,
             on_conflict="category,name"
         ).execute()
-
 
 # ============================
 # Research page
 # ============================
 if page == "Research":
     import pandas as pd
+
     st.header("Research")
-    st.caption("Click a category to expand. Add rows if needed. Edit Level or Max Level, then Save changes.")
+    st.caption("Click a category to expand. Edit Level and Max Level. Use 🔥 for in-progress and ⭐ for next up.")
 
     for cat in RESEARCH_CATEGORIES:
-        # Load rows for this category
+        # Load rows and DB tracking sets
         df = research_load(cat)
+        tracked_set, starred_set = tracking_load_sets(cat)
 
-        # DB-backed tracked set (persists across refresh)
-        tracked_set = tracking_load_set(cat)
-
-        # still reflect it in the grid
+        # Inject local columns for editor view
         if "track" not in df.columns:
-            df["track"] = df["name"].astype(str).isin(tracked_set)
+            df["track"] = df["name"].astype(str).isin(tracked_set)   # 🔥
+        if "star" not in df.columns:
+            df["star"]  = df["name"].astype(str).isin(starred_set)   # ⭐
 
-
-        # Completion for title
+        # Completion for title + status icons
         pct = research_completion(df)
         if pct >= 90:
-            icon = "🟢"
+            color_icon = "🟢"
         elif pct >= 50:
-            icon = "🟠"
+            color_icon = "🟠"
         else:
-            icon = "🔴"
+            color_icon = "🔴"
 
-        # Show 🔥 in the title if anything in this category is currently tracked
-        fire_title = " 🔥" if len(tracked_set) > 0 else ""
-        label = f"{icon} {cat} — {pct:.1f}% complete{fire_title}"
+        extras = []
+        if tracked_set: extras.append("🔥")
+        if starred_set: extras.append("⭐")
+        suffix = (" " + " ".join(extras)) if extras else ""
 
-        with st.expander(label, expanded=False):  # all start collapsed
-            # Optional summary inside
+        label = f"{color_icon} {cat} — {pct:.1f}% complete{suffix}"
+
+        with st.expander(label, expanded=False):
             st.markdown(f"**Tree Completion:** {pct:.1f}%")
 
-            # Build the editor view: checkbox first
-            editor_cols = ["track", "name", "level", "max_level", "id"] if "id" in df.columns else ["track", "name", "level", "max_level"]
+            # Build editor: [track] [star] [name] [level] [max] [id]
+            editor_cols = ["track","star","name","level","max_level","id"] if "id" in df.columns else ["track","star","name","level","max_level"]
             show = df[editor_cols].copy() if not df.empty else pd.DataFrame(columns=editor_cols)
 
             edited = st.data_editor(
                 show,
-                num_rows="dynamic",                # allow adding new lines
+                num_rows="dynamic",
                 use_container_width=True,
                 column_config={
                     "track": st.column_config.CheckboxColumn(""),
-                    "name": st.column_config.TextColumn("Research Name", width="large", required=True),
+                    "star":  st.column_config.CheckboxColumn("⭐"),
+                    "name":  st.column_config.TextColumn("Research Name", width="large", required=True),
                     "level": st.column_config.NumberColumn("Level", min_value=0, max_value=999, step=1),
                     "max_level": st.column_config.NumberColumn("Max Level", min_value=1, max_value=999, step=1),
-                    "id": st.column_config.Column("id", disabled=True, width="small") if "id" in show.columns else None,
+                    "id":    st.column_config.Column("id", disabled=True, width="small") if "id" in show.columns else None,
                 },
                 hide_index=True,
                 key=f"research_editor_{cat}",
             )
 
-            # Persist tracking (so fire survives refresh)
+            # Persist tracking states so 🔥 and ⭐ survive refresh
             tracking_save_from_editor(cat, edited)
 
-
-            # Right-aligned animated "Researching" badge if anything is tracked
-            any_tracked_now = bool(edited["track"].any()) if "track" in edited.columns else False
-            if any_tracked_now:
+            # Right-aligned badges reflecting current grid state
+            any_fire = bool(edited.get("track").any()) if "track" in edited.columns else False
+            any_star = bool(edited.get("star").any())  if "star"  in edited.columns else False
+            if any_fire or any_star:
                 st.markdown(
                     """
                     <style>
-                    @keyframes flamePulse {
-                      0%   { transform: scale(1);   filter: drop-shadow(0 0 0 rgba(255,120,0,0.2)); }
-                      50%  { transform: scale(1.07); filter: drop-shadow(0 0 8px rgba(255,140,0,0.75)); }
-                      100% { transform: scale(1);   filter: drop-shadow(0 0 0 rgba(255,120,0,0.2)); }
-                    }
-                    .rw-badge { display:flex; justify-content:flex-end; margin-top:6px; }
-                    .rw-fire  { animation: flamePulse 1s infinite; margin-right:6px; }
-                    .rw-text  { font-weight:700; }
+                    @keyframes pulse { 0%{transform:scale(1)} 50%{transform:scale(1.07)} 100%{transform:scale(1)} }
+                    .rw-badges{display:flex;justify-content:flex-end;margin-top:6px;gap:.5rem}
+                    .rw-badge{display:flex;align-items:center;gap:.35rem;font-weight:700;animation:pulse 1s infinite}
+                    .rw-badge.dim{opacity:.85}
                     </style>
-                    <div class="rw-badge">
-                      <div class="rw-fire">🔥</div>
-                      <div class="rw-text">Researching</div>
+                    <div class="rw-badges">
+                      %s %s
                     </div>
-                    """,
+                    """ % (
+                        '<div class="rw-badge">🔥<span>Researching</span></div>' if any_fire else "",
+                        '<div class="rw-badge dim">⭐<span>Next up</span></div>'   if any_star else "",
+                    ),
                     unsafe_allow_html=True,
                 )
 
-            # Actions row + live preview completion
+            # Actions + live completion preview
             colA, colB, colC = st.columns([1, 1, 6])
             with colA:
                 if st.button("Save changes", key=f"save_{cat}", type="primary", use_container_width=True):
                     try:
-                        # Exclude the local-only 'track' column before saving
-                        to_save = edited.drop(columns=[c for c in ["track"] if c in edited.columns])
+                        to_save = edited.drop(columns=[c for c in ["track","star"] if c in edited.columns])
                         research_save(cat, to_save)
                         st.success("Saved")
                         st.rerun()
@@ -948,8 +920,8 @@ if page == "Research":
                 if st.button("Reload", key=f"reload_{cat}", use_container_width=True):
                     st.rerun()
             with colC:
-                preview_pct = research_completion(edited.rename(columns={"track": "level"}) if "track" not in edited.columns else edited.assign(level=edited["level"]))
                 st.markdown(f"**Preview Completion:** {research_completion(edited):.1f}%")
+
 
 
 # --------------------------------------------------
