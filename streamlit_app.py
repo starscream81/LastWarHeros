@@ -904,10 +904,6 @@ if page == "Research":
                 """
                 st.markdown(badges_html, unsafe_allow_html=True)
 
-
-                    unsafe_allow_html=True,
-                )
-
             # Actions + live completion preview
             colA, colB, colC = st.columns([1, 1, 6])
             with colA:
