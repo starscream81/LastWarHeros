@@ -313,7 +313,7 @@ if page == "Dashboard":
 
     team_opts = ["Tank", "Air", "Missile", "Mixed"]
 
-    # prime session_state from KV so widgets show stored values
+    # prime from KV
     for i in range(1, 4):
         tkey = f"team_{i}_type"
         pkey = f"team_{i}_power"
@@ -326,34 +326,28 @@ if page == "Dashboard":
         kv_set(f"team{i}_type", st.session_state[f"team_{i}_type"])
 
     def _save_power(i: int):
-        # trim spaces and persist
         cur = st.session_state[f"team_{i}_power"].strip()
         st.session_state[f"team_{i}_power"] = cur
         kv_set(f"team{i}_power", cur)
 
     for i in range(1, 4):
-        # slightly wider inputs than before, still left-aligned
         sel_col, pow_col, _spacer = st.columns([1.5, 1.3, 10])
 
         with sel_col:
-            # keep label visible; selectbox width follows this narrow column
-            default = st.session_state[f"team_{i}_type"]
-            idx = team_opts.index(default) if default in team_opts else 0
+            # IMPORTANT: no index/value passed — widget reads from session_state
             st.selectbox(
                 f"Team {i}",
                 team_opts,
-                index=idx,
                 key=f"team_{i}_type",
                 on_change=_save_type,
                 args=(i,),
             )
 
         with pow_col:
-            # a bit wider, fits values like 120.46M; autosaves on blur/enter
             st.text_input(
                 "Power",
                 key=f"team_{i}_power",
-                max_chars=10,              # a touch wider than before
+                max_chars=10,
                 placeholder="120.46M",
                 on_change=_save_power,
                 args=(i,),
