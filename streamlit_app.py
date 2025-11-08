@@ -495,9 +495,63 @@ if page == "Dashboard":
 elif page == "Buildings":
     st.header("Buildings")
     st.write("Standard table. Only updates rows you actually change. No undo/redo.")
-    # Load current values
+
+    # Load current building data
     current = kv_bulk_read(DEFAULT_BUILDINGS)
-    buildings_table(current)
+    df = buildings_table(current)  # assumes this returns a DataFrame
+
+    # 🔨 / 🧱 tracking integration
+    up_set, next_set = bldg_tracking_load_sets()
+
+    # Add status columns to df
+    if "hammer" not in df.columns:
+        df["hammer"] = df["name"].astype(str).isin(up_set)
+    if "brick" not in df.columns:
+        df["brick"] = df["name"].astype(str).isin(next_set)
+
+    # Show quick status line
+    up_count = int(df["hammer"].sum()) if "hammer" in df.columns else 0
+    next_count = int(df["brick"].sum()) if "brick" in df.columns else 0
+    if up_count or next_count:
+        st.caption(f"🔨 {up_count} upgrading | 🧱 {next_count} next")
+
+    # Editable grid with tracking
+    editor_cols = ["hammer", "brick"] + [c for c in df.columns if c not in ("hammer", "brick")]
+    show = df[editor_cols].copy()
+
+    edited = st.data_editor(
+        show,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "hammer": st.column_config.CheckboxColumn("🔨"),
+            "brick":  st.column_config.CheckboxColumn("🧱"),
+        },
+        hide_index=True,
+        key="buildings_editor",
+    )
+
+    # Save hammer/brick tracking to Supabase
+    bldg_tracking_save_from_editor(edited)
+
+    # Optional right-aligned animated badges
+    any_hammer = bool(edited.get("hammer").any()) if "hammer" in edited.columns else False
+    any_brick  = bool(edited.get("brick").any())  if "brick"  in edited.columns else False
+    if any_hammer or any_brick:
+        badges_html = f"""
+        <style>
+        @keyframes pulse {{ 0%{{transform:scale(1)}} 50%{{transform:scale(1.07)}} 100%{{transform:scale(1)}} }}
+        .b-badges{{display:flex;justify-content:flex-end;margin-top:6px;gap:.5rem}}
+        .b-badge{{display:flex;align-items:center;gap:.35rem;font-weight:700;animation:pulse 1s infinite}}
+        .b-badge.dim{{opacity:.85}}
+        </style>
+        <div class="b-badges">
+          {('<div class="b-badge">🔨<span>Upgrading</span></div>' if any_hammer else '')}
+          {('<div class="b-badge dim">🧱<span>Next up</span></div>' if any_brick else '')}
+        </div>
+        """
+        st.markdown(badges_html, unsafe_allow_html=True)
+
 
 elif page == "Heroes":
     st.header("Heroes")
