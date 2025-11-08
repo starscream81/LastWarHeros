@@ -509,6 +509,8 @@ elif page == "Buildings":
             lvl = 0
         rows.append({"name": b, "level": lvl})
     df = pd.DataFrame(rows)
+    # Map of current KV values for change detection on save
+    current_map = {b: kv_get(b, "0") for b in DEFAULT_BUILDINGS}
 
     # 🔨 / 🧱 tracking integration
     up_set, next_set = bldg_tracking_load_sets()
@@ -565,24 +567,28 @@ elif page == "Buildings":
 
     # Save / Reload buttons for levels (KV)
     colA, colB = st.columns(2)
-    with colA:
+        with colA:
         if st.button("Save changes", use_container_width=True):
             try:
-                # strip tracking columns before saving levels
+                # we only need name + level to save
                 to_save = edited[["name", "level"]].copy()
-                # compute changed keys
+
                 changes = []
                 for _, r in to_save.iterrows():
                     key = r["name"]
                     lvl = int(r.get("level", 0) or 0)
-                    if str(current.get(key, "")) != str(lvl):
+                    # compare to current_map (string compare is fine since KV stores text)
+                    if str(current_map.get(key, "")) != str(lvl):
                         changes.append({"key": key, "value": str(lvl)})
+
                 if changes:
                     sb.table("buildings_kv").upsert(changes).execute()
+
                 st.success("Saved")
                 st.rerun()
             except Exception as e:
                 st.error(f"Save failed: {e}")
+
     with colB:
         if st.button("Reload from Supabase", use_container_width=True):
             st.rerun()
