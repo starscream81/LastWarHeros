@@ -696,6 +696,8 @@ RESEARCH_CATEGORIES = [
     "Alliance Duel",
     "Intercity Truck",
     "Special Forces",
+    "Siege to Seize",
+    "Defense Fortifications",
     "Tank Mastery",
     "Missile Mastery",
     "Air Mastery",
