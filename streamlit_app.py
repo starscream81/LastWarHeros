@@ -791,46 +791,35 @@ elif page == "Add or Update Hero":
     else:
         col_save, col_delete = st.columns([1,1])
 
-        with col_save:
-            if st.button("Save / Upsert", type="primary", use_container_width=True):
-                try:
-                    payload = {
-                        "name": name.strip(),
-                        "type": type_.strip(),
-                        "role": role.strip(),
-                        "team": team.strip(),
-                        "level": int(level),
-                        "power": float(power),
-                        "weapon": bool(weapon),
-                        "weapon_level": int(weapon_level),
-                        "max_skill_level": int(max_skill_level),
-                        "rail_gun": int(rail_gun),
-                        "rail_gun_stars": rail_gun_stars.strip(),
-                        "armor": int(armor),
-                        "armor_stars": armor_stars.strip(),
-                        "data_chip": int(data_chip),
-                        "data_chip_stars": data_chip_stars.strip(),
-                        "radar": int(radar),
-                        "radar_stars": radar_stars.strip(),
-                    }
-                    if current and current.get("id"):
-                        payload["id"] = current["id"]  # retain id to update the same row
+    # Save / Reload buttons for levels (KV)
+    colA, colB = st.columns(2)
 
-                    sb.table("heroes").upsert(payload).execute()
-                    st.success("Saved.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Save failed: {e}")
+    with colA:
+        if st.button("Save changes", use_container_width=True):
+            try:
+                # we only need name + level to save
+                to_save = edited[["name", "level"]].copy()
 
-        with col_delete:
-            if current and current.get("id"):
-                if st.button("Delete hero", use_container_width=True):
-                    try:
-                        sb.table("heroes").delete().eq("id", current["id"]).execute()
-                        st.success("Deleted.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Delete failed: {e}")
+                changes = []
+                for _, r in to_save.iterrows():
+                    key = r["name"]
+                    lvl = int(r.get("level", 0) or 0)
+                    # compare to current_map (string compare is fine since KV stores text)
+                    if str(current_map.get(key, "")) != str(lvl):
+                        changes.append({"key": key, "value": str(lvl)})
+
+                if changes:
+                    sb.table("buildings_kv").upsert(changes).execute()
+
+                st.success("Saved")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Save failed: {e}")
+
+    with colB:
+        if st.button("Reload from Supabase", use_container_width=True):
+            st.rerun()
+
 
 # ============================
 # Research helpers (top-level)
