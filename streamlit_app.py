@@ -886,22 +886,25 @@ if page == "Research":
             # Right-aligned badges reflecting current grid state
             any_fire = bool(edited.get("track").any()) if "track" in edited.columns else False
             any_star = bool(edited.get("star").any())  if "star"  in edited.columns else False
+
             if any_fire or any_star:
-                st.markdown(
-                    """
-                    <style>
-                    @keyframes pulse { 0%{transform:scale(1)} 50%{transform:scale(1.07)} 100%{transform:scale(1)} }
-                    .rw-badges{display:flex;justify-content:flex-end;margin-top:6px;gap:.5rem}
-                    .rw-badge{display:flex;align-items:center;gap:.35rem;font-weight:700;animation:pulse 1s infinite}
-                    .rw-badge.dim{opacity:.85}
-                    </style>
-                    <div class="rw-badges">
-                      %s %s
-                    </div>
-                    """ % (
-                        '<div class="rw-badge">🔥<span>Researching</span></div>' if any_fire else "",
-                        '<div class="rw-badge dim">⭐<span>Next up</span></div>'   if any_star else "",
-                    ),
+                fire_html = '<div class="rw-badge">🔥<span>Researching</span></div>' if any_fire else ""
+                star_html = '<div class="rw-badge dim">⭐<span>Next up</span></div>'   if any_star else ""
+
+                badges_html = f"""
+                <style>
+                @keyframes pulse {{ 0%{{transform:scale(1)}} 50%{{transform:scale(1.07)}} 100%{{transform:scale(1)}} }}
+                .rw-badges{{display:flex;justify-content:flex-end;margin-top:6px;gap:.5rem}}
+                .rw-badge{{display:flex;align-items:center;gap:.35rem;font-weight:700;animation:pulse 1s infinite}}
+                .rw-badge.dim{{opacity:.85}}
+                </style>
+                <div class="rw-badges">
+                    {fire_html} {star_html}
+                </div>
+                """
+                st.markdown(badges_html, unsafe_allow_html=True)
+
+
                     unsafe_allow_html=True,
                 )
 
