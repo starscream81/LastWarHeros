@@ -797,13 +797,14 @@ def tracking_save_from_editor(category: str, edited_df):
         if not nm:
             continue
         tr = bool(r.get("track", False))
-        payload.append({
-            "category": category,
-            "name": nm,
-            "tracked": tr,
-        })
+        payload.append({"category": category, "name": nm, "tracked": tr})
+
     if payload:
-        sb.table("research_tracking").upsert(payload).execute()
+        # tell Supabase which unique columns define a row
+        sb.table("research_tracking").upsert(
+            payload,
+            on_conflict="category,name"
+        ).execute()
 
 
 # ============================
