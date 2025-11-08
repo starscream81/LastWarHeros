@@ -80,6 +80,21 @@ DEFAULT_BUILDINGS: list[str] = expand_ranges_in_order(base_buildings)
 # --------------------------------------------------
 # KV helpers
 # --------------------------------------------------
+# --- KV helpers for small settings like team_* ---
+def kv_get(key: str, default: str = "") -> str:
+    try:
+        res = sb.table("buildings_kv").select("key,value").eq("key", key).maybe_single().execute()
+        row = res.data
+        return row["value"] if row and row.get("value") is not None else default
+    except Exception:
+        return default
+
+def kv_set(key: str, value: str) -> None:
+    try:
+        sb.table("buildings_kv").upsert({"key": key, "value": str(value)}).execute()
+    except Exception as e:
+        st.toast(f"Save failed for {key}: {e}", icon="⚠️")
+
 
 def kv_bulk_read(keys: list[str]) -> dict[str, dict[str, Any]]:
     """Return mapping in the *same order* as `keys`."""
@@ -293,35 +308,56 @@ if page == "Dashboard":
         </div>
         """
         st.markdown(html, unsafe_allow_html=True)
-
     st.divider()
     st.subheader("Teams")
 
     team_opts = ["Tank", "Air", "Missile", "Mixed"]
 
-    def team_row(i: int):
-        # narrow select, narrow power, big spacer to keep everything left
-        sel_col, pow_col, _spacer = st.columns([1.2, 0.9, 10])
+    # prime session_state from KV so widgets show stored values
+    for i in range(1, 4):
+        tkey = f"team_{i}_type"
+        pkey = f"team_{i}_power"
+        if tkey not in st.session_state:
+            st.session_state[tkey] = kv_get(f"team{i}_type", "Tank")
+        if pkey not in st.session_state:
+            st.session_state[pkey] = kv_get(f"team{i}_power", "")
+
+    def _save_type(i: int):
+        kv_set(f"team{i}_type", st.session_state[f"team_{i}_type"])
+
+    def _save_power(i: int):
+        # trim spaces and persist
+        cur = st.session_state[f"team_{i}_power"].strip()
+        st.session_state[f"team_{i}_power"] = cur
+        kv_set(f"team{i}_power", cur)
+
+    for i in range(1, 4):
+        # slightly wider inputs than before, still left-aligned
+        sel_col, pow_col, _spacer = st.columns([1.5, 1.3, 10])
+
         with sel_col:
+            # keep label visible; selectbox width follows this narrow column
+            default = st.session_state[f"team_{i}_type"]
+            idx = team_opts.index(default) if default in team_opts else 0
             st.selectbox(
                 f"Team {i}",
                 team_opts,
-                index=0,
+                index=idx,
                 key=f"team_{i}_type",
-                label_visibility="visible",
+                on_change=_save_type,
+                args=(i,),
             )
+
         with pow_col:
+            # a bit wider, fits values like 120.46M; autosaves on blur/enter
             st.text_input(
                 "Power",
                 key=f"team_{i}_power",
-                max_chars=6,             # e.g., 32.46M
-                placeholder="32.46M",
-                label_visibility="visible",
+                max_chars=10,              # a touch wider than before
+                placeholder="120.46M",
+                on_change=_save_power,
+                args=(i,),
             )
-
-    for i in range(1, 4):
-        team_row(i)
-
 
     st.divider()
     st.subheader("Buildings")
