@@ -123,6 +123,33 @@ def to_int(v: Optional[str]) -> int:
     except Exception:
         return 0
 
+# ----- Buildings tracking (🔨 upgrading, 🧱 next) -----
+def bldg_tracking_load_sets() -> tuple[set, set]:
+    """Return (upgrading_set, next_set) from DB."""
+    try:
+        res = sb.table("buildings_tracking").select("name, upgrading, next").execute()
+        rows = res.data or []
+        upg = {r["name"] for r in rows if r.get("upgrading")}
+        nxt = {r["name"] for r in rows if r.get("next")}
+        return upg, nxt
+    except Exception:
+        return set(), set()
+
+def bldg_tracking_save_from_editor(edited_df):
+    """Upsert building tracking states from a grid that has 'name', 'hammer', 'brick' columns."""
+    payload = []
+    for _, r in edited_df.iterrows():
+        nm = str(r.get("name", "")).strip()
+        if not nm:
+            continue
+        payload.append({
+            "name": nm,
+            "upgrading": bool(r.get("hammer", False)),  # 🔨
+            "next":      bool(r.get("brick",  False)),  # 🧱
+        })
+    if payload:
+        sb.table("buildings_tracking").upsert(payload, on_conflict="name").execute()
+
 # --------------------------------------------------
 # UI helpers
 # --------------------------------------------------
