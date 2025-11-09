@@ -495,18 +495,30 @@ if page == "Dashboard":
     # ============================ Research ============================
     with col_research:
         st.subheader("Research")
-        st.caption("What’s Cookin’")
+
+        # Load tracking list (what’s cookin’ / on deck)
         try:
-            res = sb.table("research_tracking").select("category,name,tracked,priority").execute()
-            rows = res.data or []
+            trk = sb.table("research_tracking").select("category,name,tracked,priority").execute()
+            trk_rows = trk.data or []
         except Exception:
-            rows = []
+            trk_rows = []
+
+        # Load live levels from research.data
+        try:
+            dat = sb.table("research.data").select("category,name,level").execute()
+            dat_rows = dat.data or []
+        except Exception:
+            dat_rows = []
+
+        # Build lookup dictionary by (category, name) and by name fallback
+        data_by_cat_name = {((r.get("category") or "Other"), (r.get("name") or "").strip()): r for r in dat_rows}
+        data_by_name = {(r.get("name") or "").strip(): r for r in dat_rows}
 
         from collections import defaultdict
-        hot_by_cat = defaultdict(list)   # 🔥 in progress
-        star_by_cat = defaultdict(list)  # ⭐ next up
+        hot_by_cat = defaultdict(list)   # 🔥 in-progress
+        star_by_cat = defaultdict(list)  # ⭐ on deck
 
-        for r in rows:
+        for r in trk_rows:
             cat = r.get("category") or "Other"
             nm = (r.get("name") or "").strip()
             if r.get("tracked"):
@@ -514,15 +526,19 @@ if page == "Dashboard":
             if r.get("priority"):
                 star_by_cat[cat].append(nm)
 
-        # Format hot items with "(L → L+1)" when a level is parseable
+        st.caption("What’s Cookin’")
         if any(hot_by_cat.values()):
             for cat in sorted(hot_by_cat.keys()):
                 formatted_items = []
                 for nm in sorted(hot_by_cat[cat]):
-                    base, lvl, suffix = _parse_research_name(nm)
-                    # keep the original label (base + optional explicit level in the name)
-                    label = nm  # show exactly what you already display
-                    formatted_items.append(f"{label}{_arrow(lvl)}")
+                    rec = data_by_cat_name.get((cat, nm)) or data_by_name.get(nm)
+                    arrow = ""
+                    if rec is not None:
+                        lvl = rec.get("level")
+                        if isinstance(lvl, (int, float)):
+                            nxt = int(lvl) + 1
+                            arrow = f" ({int(lvl)} → {nxt})"
+                    formatted_items.append(f"{nm}{arrow}")
                 items = " · ".join(formatted_items)
                 st.markdown(f"🔥 **{cat}** — {items}")
         else:
