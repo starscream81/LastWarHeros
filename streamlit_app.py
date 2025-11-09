@@ -492,78 +492,52 @@ if page == "Dashboard":
         else:
             st.markdown("🧱 _Nothing on deck_")
 
-    # --- Research (What’s Cookin’) — level → level+1 from research.data with multi-key matching ---
+    # --- Research (What’s Cookin’) — token match to research.data; show level → level+1 ---
     with col_research:
         st.subheader("Research")
 
-        # Load trackers
+        # 1) trackers (same as before)
         try:
             trk = sb.table("research_tracking").select("category,name,tracked,priority").execute()
             trk_rows = trk.data or []
         except Exception:
             trk_rows = []
 
-        # Load live levels
+        # 2) live levels (only need name + level)
         try:
             dat = sb.table("research.data").select("name,level").execute()
             dat_rows = dat.data or []
         except Exception:
             dat_rows = []
 
+        # 3) token helpers (robust to “2 (Missile)” vs “(Missile)” vs “VIII”)
         import re
-        ROMAN = r"(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)"
+        ROMAN = {"i","ii","iii","iv","v","vi","vii","viii","ix","x","xi","xii","xiii","xiv","xv","xvi","xvii","xviii","xix","xx"}
 
-        def _norm(s: str) -> str:
-            if not s: return ""
-            s = s.lower().strip()
-            s = re.sub(r"[^a-z0-9()\s]", " ", s)  # keep () but drop other punct
-            s = re.sub(r"\s+", " ", s)
-            return s
+        def tokens(s: str) -> set[str]:
+            if not s: return set()
+            s = s.lower()
+            # keep letters/numbers/parentheses; split on whitespace
+            s = re.sub(r"[^a-z0-9()\s]", " ", s)
+            toks = re.split(r"\s+", s.strip())
+            # drop pure numbers and roman numerals tokens
+            out = []
+            for t in toks:
+                if not t: continue
+                if t.isdigit(): continue
+                if t in ROMAN: continue
+                out.append(t)
+            return set(out)
 
-        def _drop_trailing_level(s: str) -> str:
-            if not s: return ""
-            return re.sub(rf"\s+(?:\d+|{ROMAN})\s*$", "", s, flags=re.IGNORECASE).strip()
-
-        def _drop_suffix(s: str) -> str:
-            if not s: return ""
-            return re.sub(r"\s*\([^)]*\)\s*$", "", s).strip()
-
-        def _keep_suffix_drop_level(s: str) -> str:
-            """If ends with '<level> (suffix)', keep the suffix and remove the level; else just drop trailing level."""
-            if not s: return ""
-            m = re.match(rf"^(.*?)(?:\s+(?:\d+|{ROMAN}))\s*(\([^)]*\))\s*$", s, flags=re.IGNORECASE)
-            if m:
-                return f"{m.group(1).strip()} {m.group(2)}"
-            return _drop_trailing_level(s)
-
-        def build_keys(name: str) -> list[str]:
-            """
-            Generate several normalized keys for robust matching.
-            Order indicates priority.
-            """
-            raw = name or ""
-            k1 = _norm(_keep_suffix_drop_level(raw))         # base + kept suffix
-            k2 = _norm(_drop_trailing_level(raw))            # base (+ maybe suffix) no level
-            k3 = _norm(_drop_suffix(_drop_trailing_level(raw)))  # base only (no suffix, no level)
-            k4 = _norm(raw)                                  # fully normalized raw (last resort)
-            # de-dup while preserving order
-            seen, out = set(), []
-            for k in (k1, k2, k3, k4):
-                if k and k not in seen:
-                    seen.add(k); out.append(k)
-            return out
-
-        # Build: key -> highest level from research.data (store for all key variants)
-        levels_by_key: dict[str, int] = {}
+        # 4) build data index: list of (token_set, level)
+        data_index = []
         for r in dat_rows:
-            nm  = (r.get("name") or "").strip()
+            nm = (r.get("name") or "").strip()
             lvl = r.get("level")
             if isinstance(lvl, (int, float)):
-                v = int(lvl)
-                for k in build_keys(nm):
-                    levels_by_key[k] = max(v, levels_by_key.get(k, 0))
+                data_index.append((tokens(nm), int(lvl)))
 
-        # Group trackers
+        # 5) group trackers
         from collections import defaultdict
         hot_by_cat = defaultdict(list)
         star_by_cat = defaultdict(list)
@@ -575,23 +549,35 @@ if page == "Dashboard":
             if bool(r.get("priority")):
                 star_by_cat[cat].append(nm)
 
-        # Render — What’s Cookin’
+        # 6) matching: Jaccard similarity on tokens
+        def matched_level(tracked_name: str) -> int | None:
+            t = tokens(tracked_name)
+            best_lv, best_sim = None, 0.0
+            for dt, lv in data_index:
+                if not dt: continue
+                inter = len(t & dt)
+                union = len(t | dt)
+                if union == 0: 
+                    continue
+                sim = inter / union
+                if sim > best_sim:
+                    best_sim, best_lv = sim, lv
+            # accept if reasonably close
+            return best_lv if best_sim >= 0.6 else None
+
+        # 7) render
         st.caption("What’s Cookin’")
         if any(hot_by_cat.values()):
             for cat in sorted(hot_by_cat.keys()):
                 items = []
                 for nm in sorted(hot_by_cat[cat]):
-                    lv = None
-                    for k in build_keys(nm):
-                        if k in levels_by_key:
-                            lv = levels_by_key[k]; break
+                    lv = matched_level(nm)
                     arrow = f" ({lv} → {lv + 1})" if isinstance(lv, int) else ""
                     items.append(f"{nm}{arrow}")
                 st.markdown(f"🔥 **{cat}** — " + " · ".join(items))
         else:
             st.markdown("🔥 _Nothing in progress_")
 
-        # Render — On Deck
         st.caption("On Deck")
         if any(star_by_cat.values()):
             for cat in sorted(star_by_cat.keys()):
@@ -599,9 +585,6 @@ if page == "Dashboard":
         else:
             st.markdown("⭐ _Nothing on deck_")
     # --- END Research column ---
-
-
-
 
     # --- END Research (What’s Cookin’) ---
 
