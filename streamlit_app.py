@@ -400,6 +400,69 @@ if page == "Dashboard":
                 on_change=_save_power,
                 args=(i,),
             )
+    # ============================
+    # Dashboard: Buildings + Research status
+    # ============================
+
+    colBldg, colRes = st.columns([1, 1])
+
+    with colBldg:
+        st.subheader("Buildings")
+        st.caption("What’s Cookin’")
+        try:
+            up_set, next_set = bldg_tracking_load_sets_cached()  # 🔨 / 🧱
+        except Exception:
+            up_set, next_set = set(), set()
+
+        if up_set:
+            for nm in sorted(up_set):
+                st.markdown(f"🔨 **{nm}**")
+        else:
+            st.markdown("🔨 _Nothing upgrading_")
+
+        st.caption("On Deck")
+        if next_set:
+            for nm in sorted(next_set):
+                st.markdown(f"🧱 **{nm}**")
+        else:
+            st.markdown("🧱 _Nothing on deck_")
+
+    with colRes:
+        st.subheader("Research")
+        # pull all tracked / priority across categories and group for display
+        try:
+            res = sb.table("research_tracking").select("category,name,tracked,priority").execute()
+            rows = res.data or []
+        except Exception:
+            rows = []
+
+        from collections import defaultdict
+        hot_by_cat = defaultdict(list)   # 🔥 in-progress
+        star_by_cat = defaultdict(list)  # ⭐ next up
+
+        for r in rows:
+            cat = r.get("category") or "Other"
+            name = r.get("name") or ""
+            if r.get("tracked"):
+                hot_by_cat[cat].append(name)
+            if r.get("priority"):
+                star_by_cat[cat].append(name)
+
+        st.caption("What’s Cookin’")
+        if any(hot_by_cat.values()):
+            for cat in sorted(hot_by_cat.keys()):
+                items = " · ".join(sorted(hot_by_cat[cat]))
+                st.markdown(f"🔥 **{cat}** — {items}")
+        else:
+            st.markdown("🔥 _Nothing in progress_")
+
+        st.caption("On Deck")
+        if any(star_by_cat.values()):
+            for cat in sorted(star_by_cat.keys()):
+                items = " · ".join(sorted(star_by_cat[cat]))
+                st.markdown(f"⭐ **{cat}** — {items}")
+        else:
+            st.markdown("⭐ _Nothing on deck_")
 
     st.divider()
     st.subheader("Buildings")
