@@ -305,9 +305,9 @@ def max_centers(kv: dict) -> int:
 
 def pct_chip(pct: float, label: str) -> str:
     p = max(0, min(100, int(round(pct))))
-    # red to green gradient with black text for readability
     return (
         f"<div style='display:inline-block;padding:6px 10px;border-radius:12px;"
+        f"margin-bottom:10px;"
         f"background:linear-gradient(90deg, rgba(255,120,120,1) 0%, rgba(120,200,120,1) {p}%, rgba(235,235,235,1) {p}%);"
         f"color:black;font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,0.08);'>"
         f"{label}{p}%"
@@ -354,6 +354,16 @@ if page == "Dashboard":
         </div>
         """, unsafe_allow_html=True)
         st.markdown("<style>.spacer-under-gradient{height:14px;}</style>", unsafe_allow_html=True)
+        
+        st.markdown("""
+            <style>
+            /* Extra spacing under gradient bars (those inline-block divs from pct_chip) */
+            div[data-testid="stMarkdownContainer"] > div[style*="display:inline-block"] {
+                margin-bottom: 10px !important;
+            }
+            </style>
+        """, unsafe_allow_html=True)
+
 
     st.divider()
 
@@ -505,19 +515,36 @@ if page == "Dashboard":
         st.markdown("**Smelter**"); st.markdown(pct_chip(pct_of_hq_sum("Smelter", "Smelter"), ""), unsafe_allow_html=True)
 
     with c3:
-        st.markdown("**Alliance Center**"); st.markdown(pct_chip(pct_of_hq_single("Alliance Center"), ""), unsafe_allow_html=True)
-        st.markdown("**Builder's Hut**"); st.markdown(pct_chip(pct_of_hq_single("Builder's Hut"), ""), unsafe_allow_html=True)
-        st.markdown("**Tavern**"); st.markdown(pct_chip(pct_of_hq_single("Tavern"), ""), unsafe_allow_html=True)
-        st.markdown("**Technical Institute**"); st.markdown(pct_chip(pct_of_hq_single("Technical Institute"), ""), unsafe_allow_html=True)
-        st.markdown("**Training Base**"); st.markdown(pct_chip(pct_of_hq_sum("Training Base", "Training Base"), ""), unsafe_allow_html=True)
+        st.markdown("**Alliance Center**")
+        st.markdown(pct_chip(pct_of_hq_single("Alliance Center"), ""), unsafe_allow_html=True)
+
+        st.markdown("**Builder's Hut**")
+        st.markdown(pct_chip(pct_of_hq_single("Builder's Hut"), ""), unsafe_allow_html=True)
+
+        st.markdown("**Tavern**")
+        st.markdown(pct_chip(pct_of_hq_single("Tavern"), ""), unsafe_allow_html=True)
+
+        st.markdown("**Technical Institute**")
+        st.markdown(pct_chip(pct_of_hq_single("Technical Institute"), ""), unsafe_allow_html=True)
+
+        st.markdown("**Training Base**")
+        st.markdown(pct_chip(pct_of_hq_sum("Training Base", "Training Base"), ""), unsafe_allow_html=True)
 
     with c4:
-        st.markdown("**Drone Parts Workshop**"); st.markdown(pct_chip(pct_of_hq_single("Drone Parts Workshop"), ""), unsafe_allow_html=True)
-        st.markdown("**Chip Lab**"); st.markdown(pct_chip(pct_of_hq_single("Chip Lab"), ""), unsafe_allow_html=True)
-        st.markdown("**Component Factory**"); st.markdown(pct_chip(pct_of_hq_single("Component Factory"), ""), unsafe_allow_html=True)
-        st.markdown("**Gear Factory**"); st.markdown(pct_chip(pct_of_hq_single("Gear Factory"), ""), unsafe_allow_
-        )
+        st.markdown("**Drone Parts Workshop**")
+        st.markdown(pct_chip(pct_of_hq_single("Drone Parts Workshop"), ""), unsafe_allow_html=True)
 
+        st.markdown("**Chip Lab**")
+        st.markdown(pct_chip(pct_of_hq_single("Chip Lab"), ""), unsafe_allow_html=True)
+
+        st.markdown("**Component Factory**")
+        st.markdown(pct_chip(pct_of_hq_single("Component Factory"), ""), unsafe_allow_html=True)
+
+        st.markdown("**Gear Factory**")
+        st.markdown(pct_chip(pct_of_hq_single("Gear Factory"), ""), unsafe_allow_html=True)
+
+        st.markdown("**Material Workshop**")
+        st.markdown(pct_chip(pct_of_hq_sum("Material Workshop", "Material Workshop"), ""), unsafe_allow_html=True)
 
 
 # ============================
