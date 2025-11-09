@@ -566,8 +566,10 @@ elif page == "Buildings":
         st.markdown(badges_html, unsafe_allow_html=True)
 
     # Save / Reload buttons for levels (KV)
+     # Save / Reload buttons for levels (KV)
     colA, colB = st.columns(2)
-        with colA:
+
+    with colA:
         if st.button("Save changes", use_container_width=True):
             try:
                 # we only need name + level to save
@@ -592,6 +594,7 @@ elif page == "Buildings":
     with colB:
         if st.button("Reload from Supabase", use_container_width=True):
             st.rerun()
+
 
 
 
