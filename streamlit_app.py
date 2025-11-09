@@ -670,14 +670,6 @@ if page == "Dashboard":
                 pct = cat_pcts.get(cat, 0.0)
                 st.markdown(pct_chip(pct, ""), unsafe_allow_html=True)
 
-    # Debug viewer
-    with st.expander("Research progress debug", expanded=False):
-        if debug_rows:
-            import pandas as pd
-            st.dataframe(pd.DataFrame(debug_rows))
-        else:
-            st.write("No valid level/max_level rows found in research_data.")
-
              
 # ============================
 # Buildings page
