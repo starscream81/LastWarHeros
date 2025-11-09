@@ -623,11 +623,11 @@ if page == "Dashboard":
     st.subheader("Research Progress")
 
     try:
-        res = sb.table("research_tracking").select("category,name,level,max_level").execute()
+        res = sb.table("research_data").select("category,name,level,max_level").execute()
         _rrows = res.data or []
     except Exception as e:
         _rrows = []
-        st.error(f"Failed to load research_tracking: {e}")
+        st.error(f"Failed to load research_data: {e}")
 
     from collections import defaultdict
 
@@ -676,7 +676,7 @@ if page == "Dashboard":
             import pandas as pd
             st.dataframe(pd.DataFrame(debug_rows))
         else:
-            st.write("No valid level/max_level rows found in research_tracking.")
+            st.write("No valid level/max_level rows found in research_data.")
 
              
 # ============================
