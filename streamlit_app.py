@@ -492,12 +492,11 @@ if page == "Dashboard":
         else:
             st.markdown("🧱 _Nothing on deck_")
 
-    # ============================ Research ============================
-    # --- Research (What’s Cookin’) — show level → level+1 from research.data (category-agnostic match) ---
+    # --- Research (What’s Cookin’) — show level → level+1 from research.data ---
     with col_research:
         st.subheader("Research")
 
-        # Load tracking list (what’s cookin’ / on deck)
+        # Load trackers
         try:
             trk = sb.table("research_tracking").select("category,name,tracked,priority").execute()
             trk_rows = trk.data or []
@@ -511,43 +510,44 @@ if page == "Dashboard":
         except Exception:
             dat_rows = []
 
-        # --- normalize helpers (only for matching) ---
+        # Build the matching key: keep "(…)" suffix, drop trailing level (digits or Roman)
         import re
         ROMAN = r"(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)"
 
-        def base_name(s: str) -> str:
+        def key_keep_suffix_drop_level(s: str) -> str:
             if not s:
                 return ""
             s = s.strip()
-            s = re.sub(r"\s*\([^)]*\)\s*$", "", s)                 # drop trailing "(...)"
-            s = re.sub(rf"\s+(?:\d+|{ROMAN})\s*$", "", s, flags=re.IGNORECASE)  # drop trailing level (digits/roman)
-            return s.strip()
-
-        def norm(s: str) -> str:
-            if not s:
-                return ""
+            # case: "... <level> (suffix)"  -> keep suffix, drop level
+            m = re.match(rf"^(.*?)(?:\s+(?:\d+|{ROMAN}))\s*(\([^)]*\))\s*$", s, flags=re.IGNORECASE)
+            if m:
+                base, suffix = m.group(1), m.group(2)
+                s = f"{base} {suffix}"
+            else:
+                # case: "... <level>" -> drop level
+                s = re.sub(rf"\s+(?:\d+|{ROMAN})\s*$", "", s, flags=re.IGNORECASE)
+            # normalize
             s = s.lower()
-            s = re.sub(r"[^a-z0-9\s]", " ", s)    # remove punctuation
-            s = re.sub(r"\s+", " ", s).strip()    # collapse spaces
+            s = re.sub(r"[^a-z0-9()\s]", " ", s)   # keep parentheses
+            s = re.sub(r"\s+", " ", s).strip()
             return s
 
-        # Build base-name -> level map from research.data (keep highest if duplicates)
-        levels_by_base = {}
+        # Map from research.data: key -> highest level seen
+        levels_by_key: dict[str, int] = {}
         for r in dat_rows:
             nm = (r.get("name") or "").strip()
             lvl = r.get("level")
             if isinstance(lvl, (int, float)):
-                key = norm(base_name(nm))
-                if key:
-                    cur = levels_by_base.get(key)
-                    val = int(lvl)
-                    if cur is None or val > cur:
-                        levels_by_base[key] = val
+                k = key_keep_suffix_drop_level(nm)
+                if k:
+                    lv = int(lvl)
+                    if k not in levels_by_key or lv > levels_by_key[k]:
+                        levels_by_key[k] = lv
 
-        # Gather tracked and on-deck from tracking
+        # Gather display lists from tracking
         from collections import defaultdict
-        hot_by_cat = defaultdict(list)
-        star_by_cat = defaultdict(list)
+        hot_by_cat = defaultdict(list)   # 🔥 in-progress
+        star_by_cat = defaultdict(list)  # ⭐ on deck
         for r in trk_rows:
             cat = (r.get("category") or "Other").strip()
             nm  = (r.get("name") or "").strip()
@@ -556,25 +556,16 @@ if page == "Dashboard":
             if r.get("priority"):
                 star_by_cat[cat].append(nm)
 
-        # Render
+    # ----- render (keep this dedent aligned with col_research block above) -----
         st.caption("What’s Cookin’")
-        debug_rows = []
         if any(hot_by_cat.values()):
             for cat in sorted(hot_by_cat.keys()):
                 items = []
                 for nm in sorted(hot_by_cat[cat]):
-                    bkey = norm(base_name(nm))
-                    arrow = ""
-                    lv = levels_by_base.get(bkey)
-                    if isinstance(lv, int):
-                        arrow = f" ({lv} → {lv + 1})"
+                    k = key_keep_suffix_drop_level(nm)
+                    lv = levels_by_key.get(k)
+                    arrow = f" ({lv} → {lv + 1})" if isinstance(lv, int) else ""
                     items.append(f"{nm}{arrow}")
-                    debug_rows.append({
-                        "category": cat,
-                        "tracked_name": nm,
-                        "base_key": bkey,
-                        "matched_level": lv if isinstance(lv, int) else None,
-                    })
                 st.markdown(f"🔥 **{cat}** — " + " · ".join(items))
         else:
             st.markdown("🔥 _Nothing in progress_")
@@ -585,11 +576,8 @@ if page == "Dashboard":
                 st.markdown(f"⭐ **{cat}** — " + " · ".join(sorted(star_by_cat[cat])))
         else:
             st.markdown("⭐ _Nothing on deck_")
+    # --- END Research column ---
 
-        # Debug viewer: see exactly what matched
-        with st.expander("Research matching debug", expanded=False):
-            import pandas as pd
-            st.dataframe(pd.DataFrame(debug_rows))
     # --- END Research column ---
 
 
