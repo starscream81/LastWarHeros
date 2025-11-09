@@ -618,103 +618,66 @@ if page == "Dashboard":
         st.markdown("**Material Workshop**")
         st.markdown(pct_chip(pct_of_hq_sum("Material Workshop", "Material Workshop"), ""), unsafe_allow_html=True)
 
-    # --- Research Progress (uses live level and max_level if present, with robust fallbacks) ---
+    # --- Research Progress (uses actual level and max_level from Supabase) ---
     st.divider()
     st.subheader("Research Progress")
 
-    # Fetch generous set of columns to survive schema differences
     try:
-        res = sb.table("research_tracking").select(
-            "category,name,level,max_level,lvl,cur_level,current_level,l,maxlvl,cap,maximum,max,target_level,m"
-        ).execute()
+        res = sb.table("research_tracking").select("category,name,level,max_level").execute()
         _rrows = res.data or []
-    except Exception:
+    except Exception as e:
         _rrows = []
+        st.error(f"Failed to load research_tracking: {e}")
 
-    import re
     from collections import defaultdict
 
-    # Roman map for parsing from names if needed
-    _ROMAN_MAP = {
-        "I":1, "II":2, "III":3, "IV":4, "V":5, "VI":6, "VII":7, "VIII":8, "IX":9, "X":10,
-        "XI":11, "XII":12, "XIII":13, "XIV":14, "XV":15, "XVI":16, "XVII":17, "XVIII":18, "XIX":19, "XX":20,
-    }
-
-    def _parse_level_from_text(txt: str) -> int | None:
-        """Try digits or trailing Roman numerals from the research name."""
-        if not txt:
-            return None
-        s = txt.strip()
-        # trailing digits
-        m = re.search(r"(\d+)(?:\s*\([^)]*\))?\s*$", s)
-        if m:
-            try:
-                return int(m.group(1))
-            except Exception:
-                pass
-        # trailing Roman
-        m = re.search(r"\b([IVXLCDM]+)(?:\s*\([^)]*\))?\s*$", s, re.I)
-        if m:
-            rom = m.group(1).upper()
-            if rom in _ROMAN_MAP:
-                return _ROMAN_MAP[rom]
-        return None
-
-    LVL_KEYS = ["level","lvl","cur_level","current_level","l"]
-    MAX_KEYS = ["max_level","maxlvl","cap","maximum","max","target_level","m"]
-
-    def _pick_int(row: dict, keys: list[str]) -> int | None:
-        for k in keys:
-            if k in row and row[k] is not None and row[k] != "":
-                try:
-                    return int(row[k])
-                except Exception:
-                    try:
-                        return int(float(row[k]))
-                    except Exception:
-                        pass
-        return None
-
-    # Build per category percentages
-    cat_pcts = defaultdict(list)
+    # Group rows by category
+    cat_levels = defaultdict(list)
     debug_rows = []
 
     for r in _rrows:
         cat = r.get("category") or "Other"
         name = (r.get("name") or "").strip()
-        cur = _pick_int(r, LVL_KEYS)
-        if cur is None:
-            cur = _parse_level_from_text(name)  # last resort
-        mx = _pick_int(r, MAX_KEYS)
+        lvl = r.get("level")
+        mx = r.get("max_level")
+        if isinstance(lvl, (int, float)) and isinstance(mx, (int, float)) and mx > 0:
+            pct = (lvl / mx) * 100.0
+            cat_levels[cat].append(pct)
+            debug_rows.append({
+                "category": cat,
+                "name": name,
+                "level": lvl,
+                "max_level": mx,
+                "pct": round(pct, 2)
+            })
 
-        # Only compute when we have a real max
-        if mx and mx > 0 and cur is not None:
-            pct = max(0.0, min(100.0, (cur / mx) * 100.0))
-            cat_pcts[cat].append(pct)
-            debug_rows.append({"category": cat, "name": name, "level": cur, "max": mx, "pct": round(pct, 2)})
+    # Compute average percentage per category
+    cat_pcts = {
+        cat: (sum(pcts) / len(pcts)) if pcts else 0.0
+        for cat, pcts in cat_levels.items()
+    }
 
-    # Average by category
-    avg_by_cat = {cat: (sum(pcts) / len(pcts)) if pcts else 0.0 for cat, pcts in cat_pcts.items()}
+    # Sort categories
+    cats = sorted(cat_pcts.keys())
 
-    # Order categories
-    cats = sorted(avg_by_cat.keys(), key=lambda c: ("Hero","Special Forces","Units","Base","Other").index(c) if c in {"Hero","Special Forces","Units","Base","Other"} else 99)
-
-    # Render three per row
+    # Display three per row
     for i in range(0, len(cats), 3):
         rc1, rc2, rc3 = st.columns(3)
         row = cats[i:i+3]
         for col, cat in zip([rc1, rc2, rc3], row):
             with col:
                 st.markdown(f"**{cat}**")
-                st.markdown(pct_chip(avg_by_cat.get(cat, 0.0), ""), unsafe_allow_html=True)
+                pct = cat_pcts.get(cat, 0.0)
+                st.markdown(pct_chip(pct, ""), unsafe_allow_html=True)
 
-    # Optional quick debug to verify inputs being read
+    # Debug viewer
     with st.expander("Research progress debug", expanded=False):
         if debug_rows:
             import pandas as pd
             st.dataframe(pd.DataFrame(debug_rows))
         else:
-            st.write("No rows with both current level and max level found. Check your column names in research_tracking.")
+            st.write("No valid level/max_level rows found in research_tracking.")
+
              
 # ============================
 # Buildings page
