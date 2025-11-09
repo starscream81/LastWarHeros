@@ -171,6 +171,45 @@ def bldg_tracking_load_sets_cached() -> tuple[set, set]:
     nxt = {r["name"] for r in rows if r.get("next")}
     return upg, nxt
 
+# --- Helpers for "X → X+1" displays ---
+
+import re
+
+_ROMAN_MAP = {
+    "I":1, "II":2, "III":3, "IV":4, "V":5, "VI":6, "VII":7, "VIII":8, "IX":9, "X":10,
+    "XI":11, "XII":12, "XIII":13, "XIV":14, "XV":15, "XVI":16, "XVII":17, "XVIII":18, "XIX":19, "XX":20,
+}
+
+def _parse_research_name(name: str):
+    """
+    Returns (base, level_int or None, suffix)
+    Matches:
+      - 'Advanced Armor VIII'
+      - 'Precision Targeting 2 (Missile)'
+      - 'Something (Drone)'  -> no level
+    """
+    name = name.strip()
+    # capture: base + optional level (digits or roman) + optional '(...)' suffix
+    m = re.match(r"^(.*?)(?:\s+([IVXLCDM]+|\d+))?(\s*\([^)]*\))?\s*$", name, re.I)
+    if not m:
+        return name, None, ""
+    base = (m.group(1) or "").strip()
+    lvl = m.group(2)
+    suffix = (m.group(3) or "")
+    if not lvl:
+        return base, None, suffix
+    # roman or digits
+    lvl_up = _ROMAN_MAP.get(lvl.upper())
+    if lvl_up is None:
+        try:
+            lvl_up = int(lvl)
+        except Exception:
+            lvl_up = None
+    return base, lvl_up, suffix
+
+def _arrow(cur: int | None) -> str:
+    return f" ({cur} → {cur + 1})" if isinstance(cur, int) else ""
+
 # --------------------------------------------------
 # UI helpers
 # --------------------------------------------------
@@ -417,9 +456,11 @@ if page == "Dashboard":
             up_set, next_set = bldg_tracking_load_sets_cached()  # 🔨 / 🧱
         except Exception:
             up_set, next_set = set(), set()
+
         if up_set:
             for nm in sorted(up_set):
-                st.markdown(f"🔨 **{nm}**")
+                cur_lvl = get_level(kv, nm)  # read from buildings_kv
+                st.markdown(f"🔨 **{nm}**{_arrow(cur_lvl)}")
         else:
             st.markdown("🔨 _Nothing upgrading_")
 
@@ -439,19 +480,29 @@ if page == "Dashboard":
             rows = res.data or []
         except Exception:
             rows = []
+
         from collections import defaultdict
-        hot_by_cat, star_by_cat = defaultdict(list), defaultdict(list)
+        hot_by_cat = defaultdict(list)   # 🔥 in progress
+        star_by_cat = defaultdict(list)  # ⭐ next up
+
         for r in rows:
             cat = r.get("category") or "Other"
-            name = r.get("name") or ""
+            nm = (r.get("name") or "").strip()
             if r.get("tracked"):
-                hot_by_cat[cat].append(name)
+                hot_by_cat[cat].append(nm)
             if r.get("priority"):
-                star_by_cat[cat].append(name)
+                star_by_cat[cat].append(nm)
 
+        # Format hot items with "(L → L+1)" when a level is parseable
         if any(hot_by_cat.values()):
             for cat in sorted(hot_by_cat.keys()):
-                items = " · ".join(sorted(hot_by_cat[cat]))
+                formatted_items = []
+                for nm in sorted(hot_by_cat[cat]):
+                    base, lvl, suffix = _parse_research_name(nm)
+                    # keep the original label (base + optional explicit level in the name)
+                    label = nm  # show exactly what you already display
+                    formatted_items.append(f"{label}{_arrow(lvl)}")
+                items = " · ".join(formatted_items)
                 st.markdown(f"🔥 **{cat}** — {items}")
         else:
             st.markdown("🔥 _Nothing in progress_")
