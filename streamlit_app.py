@@ -149,6 +149,26 @@ def bldg_tracking_save_from_editor(edited_df):
         })
     if payload:
         sb.table("buildings_tracking").upsert(payload, on_conflict="name").execute()
+        
+# --------- Fast loaders (cached) ---------
+@st.cache_data(ttl=5)
+def kv_read_many(keys: list[str]) -> dict[str, str]:
+    # one query instead of many kv_get calls
+    res = sb.table("buildings_kv").select("key,value").in_("key", keys).execute()
+    rows = res.data or []
+    m = {r["key"]: r.get("value") if r.get("value") is not None else "0" for r in rows}
+    # ensure every requested key exists
+    for k in keys:
+        m.setdefault(k, "0")
+    return m
+
+@st.cache_data(ttl=5)
+def bldg_tracking_load_sets_cached() -> tuple[set, set]:
+    res = sb.table("buildings_tracking").select("name, upgrading, next").execute()
+    rows = res.data or []
+    upg = {r["name"] for r in rows if r.get("upgrading")}
+    nxt = {r["name"] for r in rows if r.get("next")}
+    return upg, nxt
 
 # --------------------------------------------------
 # UI helpers
@@ -491,42 +511,34 @@ if page == "Dashboard":
 # --- END DASHBOARD ----------------------------------------------------------
 
 
-
+# ============================
+# Buildings page
+# ============================
 elif page == "Buildings":
     import pandas as pd
 
     st.header("Buildings")
     st.write("Standard table. Only updates rows you actually change. No undo/redo.")
 
-      # Load current building KV into a DataFrame (ordered by DEFAULT_BUILDINGS)
-    rows = []
-    for b in DEFAULT_BUILDINGS:
-        # kv_get returns a string; coerce safely to int
-        v = kv_get(b, "0")
-        try:
-            lvl = int(v)
-        except Exception:
-            lvl = 0
-        rows.append({"name": b, "level": lvl})
+    # --- fast read: all levels at once, cached briefly ---
+    current_map = kv_read_many(DEFAULT_BUILDINGS)
+
+    rows = [{"name": b, "level": int(current_map.get(b, "0") or 0)} for b in DEFAULT_BUILDINGS]
     df = pd.DataFrame(rows)
-    # Map of current KV values for change detection on save
-    current_map = {b: kv_get(b, "0") for b in DEFAULT_BUILDINGS}
 
-    # 🔨 / 🧱 tracking integration
-    up_set, next_set = bldg_tracking_load_sets()
+    # --- fast read: tracking sets, cached briefly ---
+    up_set, next_set = bldg_tracking_load_sets_cached()
 
-    if "hammer" not in df.columns:  # 🔨 currently upgrading
-        df["hammer"] = df["name"].astype(str).isin(up_set)
-    if "brick" not in df.columns:   # 🧱 next up
-        df["brick"] = df["name"].astype(str).isin(next_set)
+    # inject 🔨 / 🧱
+    df["hammer"] = df["name"].astype(str).isin(up_set)
+    df["brick"]  = df["name"].astype(str).isin(next_set)
 
-    # Status line
-    up_count = int(df["hammer"].sum())
-    next_count = int(df["brick"].sum())
+    # status line
+    up_count, next_count = int(df["hammer"].sum()), int(df["brick"].sum())
     if up_count or next_count:
         st.caption(f"🔨 {up_count} upgrading | 🧱 {next_count} next")
 
-    # Editor with 🔨/🧱 first
+    # editor
     editor_cols = ["hammer", "brick", "name", "level"]
     show = df[editor_cols].copy()
 
@@ -544,12 +556,26 @@ elif page == "Buildings":
         key="buildings_editor",
     )
 
-    # Persist 🔨/🧱 tracking (separate table)
-    bldg_tracking_save_from_editor(edited)
+    # --- only upsert tracking if it changed ---
+    new_up   = set(edited.loc[edited["hammer"], "name"]) if "hammer" in edited.columns else set()
+    new_next = set(edited.loc[edited["brick"],  "name"]) if "brick"  in edited.columns else set()
 
-    # Optional right-aligned badges
-    any_hammer = bool(edited.get("hammer").any()) if "hammer" in edited.columns else False
-    any_brick  = bool(edited.get("brick").any())  if "brick"  in edited.columns else False
+    if new_up != up_set or new_next != next_set:
+        payload = []
+        # union of all names involved
+        all_names = set(edited["name"])
+        for nm in all_names:
+            payload.append({
+                "name": nm,
+                "upgrading": nm in new_up,
+                "next":      nm in new_next,
+            })
+        sb.table("buildings_tracking").upsert(payload, on_conflict="name").execute()
+        # clear tiny caches so UI reflects immediately
+        bldg_tracking_load_sets_cached.clear()
+
+    # optional badges
+    any_hammer, any_brick = bool(new_up), bool(new_next)
     if any_hammer or any_brick:
         badges_html = f"""
         <style>
@@ -565,39 +591,33 @@ elif page == "Buildings":
         """
         st.markdown(badges_html, unsafe_allow_html=True)
 
-    # Save / Reload buttons for levels (KV)
-     # Save / Reload buttons for levels (KV)
+    # save / reload buttons for levels
     colA, colB = st.columns(2)
-
     with colA:
         if st.button("Save changes", use_container_width=True):
             try:
-                # we only need name + level to save
                 to_save = edited[["name", "level"]].copy()
-
                 changes = []
                 for _, r in to_save.iterrows():
                     key = r["name"]
                     lvl = int(r.get("level", 0) or 0)
-                    # compare to current_map (string compare is fine since KV stores text)
                     if str(current_map.get(key, "")) != str(lvl):
                         changes.append({"key": key, "value": str(lvl)})
-
                 if changes:
                     sb.table("buildings_kv").upsert(changes).execute()
-
+                    kv_read_many.clear()   # clear cache so reload shows new values
                 st.success("Saved")
                 st.rerun()
             except Exception as e:
                 st.error(f"Save failed: {e}")
-
     with colB:
         if st.button("Reload from Supabase", use_container_width=True):
+            kv_read_many.clear()
             st.rerun()
 
-
-
-
+# ============================
+# Heros page
+# ============================
 elif page == "Heroes":
     st.header("Heroes")
     st.write("Sorted by Power (desc). Role-based highlights + green 5-star override + clean numbers.")
@@ -712,6 +732,9 @@ elif page == "Heroes":
         st.error("Could not load heroes (check table name/columns).")
         st.code(str(e))
 
+# ============================
+# Add or Update Heros page
+# ============================
 elif page == "Add or Update Hero":
     st.header("Add or Update Hero")
 
