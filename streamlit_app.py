@@ -610,13 +610,14 @@ if page == "Dashboard":
         else:
             st.markdown("⭐ _Nothing on deck_")
 
-        # optional: quick debug
-        with st.expander("Research matching debug", expanded=False):
-            import pandas as pd
-            if debug_rows:
-                st.dataframe(pd.DataFrame(debug_rows))
-            else:
-                st.write("No tracked items or no matches found.")
+    # optional: quick debug
+    with st.expander("Research matching debug", expanded=False):
+        import pandas as pd
+        if debug_rows:
+            st.dataframe(pd.DataFrame(debug_rows))
+        else:
+            st.write("No tracked items matched rows in research.data.")
+
     # --- END Research (What’s Cookin’) ---
 
     # quick debug so you can see matches
