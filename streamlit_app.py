@@ -493,92 +493,87 @@ if page == "Dashboard":
             st.markdown("🧱 _Nothing on deck_")
 
     # ============================ Research ============================
-with col_research:
-    st.subheader("Research")
+    # --- Research (What’s Cookin’) — show level → level+1 from research.data ---
+    with col_research:
+        st.subheader("Research")
 
-    # Load tracking list (what’s cookin’ / on deck)
-    try:
-        trk = sb.table("research_tracking").select("category,name,tracked,priority").execute()
-        trk_rows = trk.data or []
-    except Exception:
-        trk_rows = []
+        # Load tracking items (what's cookin' / on deck)
+        try:
+            trk = sb.table("research_tracking").select("category,name,tracked,priority").execute()
+            trk_rows = trk.data or []
+        except Exception:
+            trk_rows = []
 
-    # Load live levels from research.data
-    try:
-        dat = sb.table("research.data").select("category,name,level").execute()
-        dat_rows = dat.data or []
-    except Exception:
-        dat_rows = []
+        # Load live levels from research.data
+        try:
+            dat = sb.table("research.data").select("category,name,level").execute()
+            dat_rows = dat.data or []
+        except Exception:
+            dat_rows = []
 
-    # --- normalize helpers (only for matching) ---
-    import re
+        # --- normalize helpers (only for matching) ---
+        import re
+        ROMAN = r"(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)"
 
-    ROMAN = r"(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)"
-    def base_name(s: str) -> str:
-        if not s:
-            return ""
-        s = s.strip()
-        s = re.sub(r"\s*\([^)]*\)\s*$", "", s)                 # drop trailing (suffix)
-        s = re.sub(rf"\s+(?:\d+|{ROMAN})\s*$", "", s, flags=re.IGNORECASE)  # drop trailing level (arabic or roman)
-        return s.strip()
+        def _base_name(s: str) -> str:
+            if not s:
+                return ""
+            s = s.strip()
+            s = re.sub(r"\s*\([^)]*\)\s*$", "", s)                 # drop trailing (...) suffix
+            s = re.sub(rf"\s+(?:\d+|{ROMAN})\s*$", "", s, flags=re.IGNORECASE)  # drop trailing level
+            return s.strip()
 
-    def norm_cat(s: str) -> str:
-        return (s or "").strip().lower()
+        def _norm_cat(s: str) -> str:
+            return (s or "").strip().lower()
 
-    # Build map: (category, base) -> level (take highest if duplicates)
-    lvl_by_cat_base: dict[tuple[str, str], int] = {}
-    for r in dat_rows:
-        cat = norm_cat(r.get("category") or "other")
-        nm  = (r.get("name") or "").strip()
-        lvl = r.get("level")
-        if isinstance(lvl, (int, float)):
-            key = (cat, base_name(nm).lower())
-            cur = lvl_by_cat_base.get(key)
-            val = int(lvl)
-            if cur is None or val > cur:
-                lvl_by_cat_base[key] = val
+        # Build (category, base) -> level map from research.data
+        lvl_by_cat_base = {}
+        for r in dat_rows:
+            cat = _norm_cat(r.get("category") or "other")
+            nm  = (r.get("name") or "").strip()
+            lvl = r.get("level")
+            if isinstance(lvl, (int, float)):
+                key = (cat, _base_name(nm).lower())
+                cur = lvl_by_cat_base.get(key)
+                val = int(lvl)
+                if cur is None or val > cur:
+                    lvl_by_cat_base[key] = val
 
-    from collections import defaultdict
-    hot_by_cat = defaultdict(list)   # 🔥 in-progress
-    star_by_cat = defaultdict(list)  # ⭐ on deck
+        # Gather display lists from tracking
+        from collections import defaultdict
+        hot_by_cat = defaultdict(list)   # 🔥 in-progress
+        star_by_cat = defaultdict(list)  # ⭐ on deck
+        for r in trk_rows:
+            cat = (r.get("category") or "Other").strip()
+            nm  = (r.get("name") or "").strip()
+            if r.get("tracked"):
+                hot_by_cat[cat].append(nm)
+            if r.get("priority"):
+                star_by_cat[cat].append(nm)
 
-    for r in trk_rows:
-        cat = (r.get("category") or "Other").strip()
-        nm  = (r.get("name") or "").strip()
-        if r.get("tracked"):
-            hot_by_cat[cat].append(nm)
-        if r.get("priority"):
-            star_by_cat[cat].append(nm)
-
-    st.caption("What’s Cookin’")
-    if any(hot_by_cat.values()):
-        for cat in sorted(hot_by_cat.keys()):
-            formatted = []
-            for nm in sorted(hot_by_cat[cat]):
-                key = (norm_cat(cat), base_name(nm).lower())
-                arrow = ""
-                if key in lvl_by_cat_base:
-                    cur = lvl_by_cat_base[key]
-                    arrow = f" ({cur} → {cur + 1})"
-                formatted.append(f"{nm}{arrow}")
-            st.markdown(f"🔥 **{cat}** — " + " · ".join(formatted))
-    else:
-        st.markdown("🔥 _Nothing in progress_")
-
-    st.caption("On Deck")
-    if any(star_by_cat.values()):
-        for cat in sorted(star_by_cat.keys()):
-            st.markdown(f"⭐ **{cat}** — " + " · ".join(sorted(star_by_cat[cat])))
-    else:
-        st.markdown("⭐ _Nothing on deck_")
-
-    # optional: quick debug
-    with st.expander("Research matching debug", expanded=False):
-        import pandas as pd
-        if debug_rows:
-            st.dataframe(pd.DataFrame(debug_rows))
+        st.caption("What’s Cookin’")
+        if any(hot_by_cat.values()):
+            for cat in sorted(hot_by_cat.keys()):
+                items = []
+                for nm in sorted(hot_by_cat[cat]):
+                    key = (_norm_cat(cat), _base_name(nm).lower())
+                    arrow = ""
+                    if key in lvl_by_cat_base:
+                        cur = lvl_by_cat_base[key]
+                        arrow = f" ({cur} → {cur + 1})"
+                    items.append(f"{nm}{arrow}")
+                st.markdown(f"🔥 **{cat}** — " + " · ".join(items))
         else:
-            st.write("No tracked items matched rows in research.data.")
+            st.markdown("🔥 _Nothing in progress_")
+
+        st.caption("On Deck")
+        if any(star_by_cat.values()):
+            for cat in sorted(star_by_cat.keys()):
+                st.markdown(f"⭐ **{cat}** — " + " · ".join(sorted(star_by_cat[cat])))
+        else:
+            st.markdown("⭐ _Nothing on deck_")
+    # --- END Research column ---
+
 
     # --- END Research (What’s Cookin’) ---
 
