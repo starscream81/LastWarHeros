@@ -510,17 +510,44 @@ if page == "Dashboard":
         except Exception:
             dat_rows = []
 
-        # Build lookup dictionary by (category, name) and by name fallback
-        data_by_cat_name = {((r.get("category") or "Other"), (r.get("name") or "").strip()): r for r in dat_rows}
-        data_by_name = {(r.get("name") or "").strip(): r for r in dat_rows}
+        # --- name normalization: strip trailing level (digits or Roman) and optional "(...)" suffix
+        import re
+        ROMAN = r"I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX"
+        def base_name(s: str) -> str:
+            if not s:
+                return ""
+            s = s.strip()
+            # remove optional trailing "(...)" first
+            s = re.sub(r"\s*\([^)]*\)\s*$", "", s)
+            # then remove a trailing number or Roman numeral
+            s = re.sub(rf"\s+(?:\d+|(?:{ROMAN}))\s*$", "", s, flags=re.IGNORECASE)
+            return s.strip()
+
+        # Build lookups: by exact and by base
+        def _norm(s: str) -> str:
+            return (s or "").strip()
+
+        data_by_cat_name = {}
+        data_by_cat_base = {}
+        data_by_name = {}
+        data_by_base = {}
+
+        for r in dat_rows:
+            cat = _norm(r.get("category") or "Other")
+            nm  = _norm(r.get("name") or "")
+            bnm = base_name(nm)
+            data_by_cat_name[(cat, nm)] = r
+            data_by_cat_base[(cat, bnm)] = r
+            data_by_name[nm] = r
+            data_by_base[bnm] = r
 
         from collections import defaultdict
         hot_by_cat = defaultdict(list)   # 🔥 in-progress
         star_by_cat = defaultdict(list)  # ⭐ on deck
 
         for r in trk_rows:
-            cat = r.get("category") or "Other"
-            nm = (r.get("name") or "").strip()
+            cat = _norm(r.get("category") or "Other")
+            nm  = _norm(r.get("name") or "")
             if r.get("tracked"):
                 hot_by_cat[cat].append(nm)
             if r.get("priority"):
@@ -531,13 +558,18 @@ if page == "Dashboard":
             for cat in sorted(hot_by_cat.keys()):
                 formatted_items = []
                 for nm in sorted(hot_by_cat[cat]):
-                    rec = data_by_cat_name.get((cat, nm)) or data_by_name.get(nm)
+                    bnm = base_name(nm)
+                    # try matches in decreasing strictness
+                    rec = (data_by_cat_name.get((cat, nm))
+                           or data_by_cat_base.get((cat, bnm))
+                           or data_by_name.get(nm)
+                           or data_by_base.get(bnm))
                     arrow = ""
                     if rec is not None:
                         lvl = rec.get("level")
                         if isinstance(lvl, (int, float)):
-                            nxt = int(lvl) + 1
-                            arrow = f" ({int(lvl)} → {nxt})"
+                            lvl = int(lvl)
+                            arrow = f" ({lvl} → {lvl + 1})"
                     formatted_items.append(f"{nm}{arrow}")
                 items = " · ".join(formatted_items)
                 st.markdown(f"🔥 **{cat}** — {items}")
@@ -551,6 +583,7 @@ if page == "Dashboard":
                 st.markdown(f"⭐ **{cat}** — {items}")
         else:
             st.markdown("⭐ _Nothing on deck_")
+
 
     # ===== below: your existing progress section unchanged =====
     st.divider()
