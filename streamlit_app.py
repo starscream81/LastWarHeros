@@ -492,95 +492,141 @@ if page == "Dashboard":
         else:
             st.markdown("🧱 _Nothing on deck_")
 
-    # --- Research (What’s Cookin’) — show level → level+1 from research.data ---
-    with col_research:
-        st.subheader("Research")
+# --- Research (What’s Cookin’) — show level → level+1 from research.data with robust matching ---
+with col_research:
+    st.subheader("Research")
 
-        # Load trackers
-        try:
-            trk = sb.table("research_tracking").select("category,name,tracked,priority").execute()
-            trk_rows = trk.data or []
-        except Exception:
-            trk_rows = []
+    # Trackers
+    try:
+        trk = sb.table("research_tracking").select("category,name,tracked,priority").execute()
+        trk_rows = trk.data or []
+    except Exception:
+        trk_rows = []
 
-        # Load live levels from research.data
-        try:
-            dat = sb.table("research.data").select("name,level").execute()
-            dat_rows = dat.data or []
-        except Exception:
-            dat_rows = []
+    # Live levels
+    try:
+        dat = sb.table("research.data").select("name,level").execute()
+        dat_rows = dat.data or []
+    except Exception:
+        dat_rows = []
 
-        # Build the matching key: keep "(…)" suffix, drop trailing level (digits or Roman)
-        import re
-        ROMAN = r"(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)"
+    import re
+    from difflib import SequenceMatcher
 
-        def key_keep_suffix_drop_level(s: str) -> str:
-            if not s:
-                return ""
-            s = s.strip()
-            # case: "... <level> (suffix)"  -> keep suffix, drop level
-            m = re.match(rf"^(.*?)(?:\s+(?:\d+|{ROMAN}))\s*(\([^)]*\))\s*$", s, flags=re.IGNORECASE)
-            if m:
-                base, suffix = m.group(1), m.group(2)
-                s = f"{base} {suffix}"
-            else:
-                # case: "... <level>" -> drop level
-                s = re.sub(rf"\s+(?:\d+|{ROMAN})\s*$", "", s, flags=re.IGNORECASE)
-            # normalize
-            s = s.lower()
-            s = re.sub(r"[^a-z0-9()\s]", " ", s)   # keep parentheses
-            s = re.sub(r"\s+", " ", s).strip()
-            return s
+    ROMAN = r"(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)"
 
-        # Map from research.data: key -> highest level seen
-        levels_by_key: dict[str, int] = {}
-        for r in dat_rows:
-            nm = (r.get("name") or "").strip()
-            lvl = r.get("level")
-            if isinstance(lvl, (int, float)):
-                k = key_keep_suffix_drop_level(nm)
-                if k:
-                    lv = int(lvl)
-                    if k not in levels_by_key or lv > levels_by_key[k]:
-                        levels_by_key[k] = lv
+    def _norm(s: str) -> str:
+        if not s: return ""
+        s = s.lower().strip()
+        s = re.sub(r"[^a-z0-9()\s]", " ", s)
+        s = re.sub(r"\s+", " ", s)
+        return s
 
-        # Gather display lists from tracking
-        from collections import defaultdict
-        hot_by_cat = defaultdict(list)   # 🔥 in-progress
-        star_by_cat = defaultdict(list)  # ⭐ on deck
-        for r in trk_rows:
-            cat = (r.get("category") or "Other").strip()
-            nm  = (r.get("name") or "").strip()
-            if r.get("tracked"):
-                hot_by_cat[cat].append(nm)
-            if r.get("priority"):
-                star_by_cat[cat].append(nm)
-
-    # ----- render (keep this dedent aligned with col_research block above) -----
-        st.caption("What’s Cookin’")
-        if any(hot_by_cat.values()):
-            for cat in sorted(hot_by_cat.keys()):
-                items = []
-                for nm in sorted(hot_by_cat[cat]):
-                    k = key_keep_suffix_drop_level(nm)
-                    lv = levels_by_key.get(k)
-                    arrow = f" ({lv} → {lv + 1})" if isinstance(lv, int) else ""
-                    items.append(f"{nm}{arrow}")
-                st.markdown(f"🔥 **{cat}** — " + " · ".join(items))
+    def key_keep_suffix_drop_level(s: str) -> str:
+        """Keep '(...)' suffix if present, drop trailing number/Roman before it; normalize."""
+        if not s: return ""
+        s = s.strip()
+        m = re.match(rf"^(.*?)(?:\s+(?:\d+|{ROMAN}))\s*(\([^)]*\))\s*$", s, flags=re.IGNORECASE)
+        if m:
+            s = f"{m.group(1)} {m.group(2)}"
         else:
-            st.markdown("🔥 _Nothing in progress_")
+            s = re.sub(rf"\s+(?:\d+|{ROMAN})\s*$", "", s, flags=re.IGNORECASE)
+        return _norm(s)
 
-        st.caption("On Deck")
-        if any(star_by_cat.values()):
-            for cat in sorted(star_by_cat.keys()):
-                st.markdown(f"⭐ **{cat}** — " + " · ".join(sorted(star_by_cat[cat])))
-        else:
-            st.markdown("⭐ _Nothing on deck_")
-    # --- END Research column ---
+    def key_base_only(s: str) -> str:
+        """Drop any '(...)' and trailing level; normalize."""
+        if not s: return ""
+        s = s.strip()
+        s = re.sub(r"\s*\([^)]*\)\s*$", "", s)  # drop suffix
+        s = re.sub(rf"\s+(?:\d+|{ROMAN})\s*$", "", s, flags=re.IGNORECASE)  # drop level
+        return _norm(s)
 
-    # --- END Research column ---
+    # Build indices from research.data
+    # - with-suffix keys (preferred)
+    # - base-only keys (fallback)
+    data_by_with_suffix = {}  # key_keep_suffix_drop_level(name) -> level
+    data_by_base = {}         # key_base_only(name) -> level
 
+    for r in dat_rows:
+        nm = (r.get("name") or "").strip()
+        lvl = r.get("level")
+        if isinstance(lvl, (int, float)):
+            v = int(lvl)
+            k1 = key_keep_suffix_drop_level(nm)
+            k2 = key_base_only(nm)
+            if k1:
+                # keep highest level if duplicates
+                data_by_with_suffix[k1] = max(v, data_by_with_suffix.get(k1, 0))
+            if k2:
+                data_by_base[k2] = max(v, data_by_base.get(k2, 0))
 
+    # Collect trackers
+    from collections import defaultdict
+    hot_by_cat = defaultdict(list)
+    star_by_cat = defaultdict(list)
+    for r in trk_rows:
+        cat = (r.get("category") or "Other").strip()
+        nm  = (r.get("name") or "").strip()
+        if r.get("tracked"):  hot_by_cat[cat].append(nm)
+        if r.get("priority"): star_by_cat[cat].append(nm)
+
+    # Matching helper
+    def match_level(tracked_name: str) -> int | None:
+        k1 = key_keep_suffix_drop_level(tracked_name)
+        if k1 in data_by_with_suffix:
+            return data_by_with_suffix[k1]
+
+        k2 = key_base_only(tracked_name)
+        if k2 in data_by_base:
+            return data_by_base[k2]
+
+        # substring fallback
+        for dk, lv in data_by_with_suffix.items():
+            if dk in k1 or k1 in dk:
+                return lv
+        for dk, lv in data_by_base.items():
+            if dk in k2 or k2 in dk:
+                return lv
+
+        # fuzzy fallback
+        best_lv, best_sim = None, 0.0
+        for dk, lv in data_by_with_suffix.items():
+            sim = SequenceMatcher(None, dk, k1).ratio()
+            if sim > best_sim:
+                best_sim, best_lv = sim, lv
+        if best_sim >= 0.9:  # only accept very close matches
+            return best_lv
+
+        best_lv, best_sim = None, 0.0
+        for dk, lv in data_by_base.items():
+            sim = SequenceMatcher(None, dk, k2).ratio()
+            if sim > best_sim:
+                best_sim, best_lv = sim, lv
+        if best_sim >= 0.9:
+            return best_lv
+
+        return None
+
+    # Render
+    st.caption("What’s Cookin’")
+    if any(hot_by_cat.values()):
+        for cat in sorted(hot_by_cat.keys()):
+            items = []
+            for nm in sorted(hot_by_cat[cat]):
+                lv = match_level(nm)
+                arrow = f" ({lv} → {lv + 1})" if isinstance(lv, int) else ""
+                items.append(f"{nm}{arrow}")
+            st.markdown(f"🔥 **{cat}** — " + " · ".join(items))
+    else:
+        st.markdown("🔥 _Nothing in progress_")
+
+    st.caption("On Deck")
+    if any(star_by_cat.values()):
+        for cat in sorted(star_by_cat.keys()):
+            st.markdown(f"⭐ **{cat}** — " + " · ".join(sorted(star_by_cat[cat])))
+    else:
+        st.markdown("⭐ _Nothing on deck_")
+# --- END Research column ---
 
     # --- END Research (What’s Cookin’) ---
 
