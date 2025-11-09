@@ -516,7 +516,7 @@ if page == "Dashboard":
         st.markdown("**Chip Lab**"); st.markdown(pct_chip(pct_of_hq_single("Chip Lab"), ""), unsafe_allow_html=True)
         st.markdown("**Component Factory**"); st.markdown(pct_chip(pct_of_hq_single("Component Factory"), ""), unsafe_allow_html=True)
         st.markdown("**Gear Factory**"); st.markdown(pct_chip(pct_of_hq_single("Gear Factory"), ""), unsafe_allow_
-
+        )
 
 
 
