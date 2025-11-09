@@ -318,8 +318,6 @@ def pct_chip(pct: float, label: str) -> str:
 if page == "Dashboard":
     import pandas as pd  # ensure available in this scope
 
-    cols = st.columns([1, 3])
-
     # Load buildings once
     kv = kv_bulk_read(DEFAULT_BUILDINGS)
     hq = get_level(kv, "HQ")
@@ -331,89 +329,84 @@ if page == "Dashboard":
         total_power = int(arr.fillna(0).sum())
     except Exception:
         total_power = 0
-
     formatted_power = f"{total_power:,}"
 
-    with cols[0]:
+    # Header row (frog + stats)
+    h_left, h_right = st.columns([1, 3])
+    with h_left:
         try:
             st.image("frog.png", width=160)
         except Exception:
             st.write(":frog: (frog.png not found)")
-
-    with cols[1]:
-        html = f"""
+    with h_right:
+        st.markdown(f"""
         <div style='display:flex; align-items:center; height:160px;'>
-            <div style='margin-left:15px;'>
-                <h2 style='margin:0; font-weight:700;'>Shōckwave [FER]</h2>
-                <div style='font-size:1.1rem; margin-top:6px;'>
-                    <strong>HQ Level:</strong>
-                    <span style='font-weight:700; font-size:1.2rem;'>{hq}</span>
-                    &nbsp;&nbsp;&nbsp;
-                    <strong>Total Hero Power:</strong>
-                    <span style='font-weight:700; font-size:1.2rem;'>{formatted_power}</span>
-                </div>
+          <div style='margin-left:15px;'>
+            <h2 style='margin:0; font-weight:700;'>Shōckwave [FER]</h2>
+            <div style='font-size:1.1rem; margin-top:6px;'>
+              <strong>HQ Level:</strong>
+              <span style='font-weight:700; font-size:1.2rem;'>{hq}</span>
+              &nbsp;&nbsp;&nbsp;
+              <strong>Total Hero Power:</strong>
+              <span style='font-weight:700; font-size:1.2rem;'>{formatted_power}</span>
             </div>
+          </div>
         </div>
-        """
-        st.markdown(html, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
+        st.markdown("<style>.spacer-under-gradient{height:14px;}</style>", unsafe_allow_html=True)
+
     st.divider()
-    st.subheader("Teams")
 
-    team_opts = ["Tank", "Air", "Missile", "Mixed"]
+    # ONE row, THREE columns: Teams | Buildings | Research  (this is the key)
+    col_teams, col_buildings, col_research = st.columns([1, 1, 1], gap="large")
 
-    # prime from KV
-    for i in range(1, 4):
-        tkey = f"team_{i}_type"
-        pkey = f"team_{i}_power"
-        if tkey not in st.session_state:
-            st.session_state[tkey] = kv_get(f"team{i}_type", "Tank")
-        if pkey not in st.session_state:
-            st.session_state[pkey] = kv_get(f"team{i}_power", "")
+    # ============================ Teams ============================
+    with col_teams:
+        st.subheader("Teams")
+        team_opts = ["Tank", "Air", "Missile", "Mixed"]
 
-    def _save_type(i: int):
-        kv_set(f"team{i}_type", st.session_state[f"team_{i}_type"])
+        # prime from KV
+        for i in range(1, 4):
+            tkey = f"team_{i}_type"
+            pkey = f"team_{i}_power"
+            if tkey not in st.session_state:
+                st.session_state[tkey] = kv_get(f"team{i}_type", "Tank")
+            if pkey not in st.session_state:
+                st.session_state[pkey] = kv_get(f"team{i}_power", "")
 
-    def _save_power(i: int):
-        cur = st.session_state[f"team_{i}_power"].strip()
-        st.session_state[f"team_{i}_power"] = cur
-        kv_set(f"team{i}_power", cur)
+        def _save_type(i: int):
+            kv_set(f"team{i}_type", st.session_state[f"team_{i}_type"])
 
-    for i in range(1, 4):
-        sel_col, pow_col, _spacer = st.columns([1.5, 1.3, 10])
+        def _save_power(i: int):
+            cur = st.session_state[f"team_{i}_power"].strip()
+            st.session_state[f"team_{i}_power"] = cur
+            kv_set(f"team{i}_power", cur)
 
-        with sel_col:
-            # IMPORTANT: no index/value passed — widget reads from session_state
-            st.selectbox(
-                f"Team {i}",
-                team_opts,
-                key=f"team_{i}_type",
-                on_change=_save_type,
-                args=(i,),
-            )
+        for i in range(1, 4):
+            sel_col, pow_col, _space = st.columns([1.5, 1.3, 10])
+            with sel_col:
+                st.selectbox(
+                    f"Team {i}", team_opts,
+                    key=f"team_{i}_type",
+                    on_change=_save_type, args=(i,),
+                )
+            with pow_col:
+                st.text_input(
+                    "Power",
+                    key=f"team_{i}_power",
+                    max_chars=10,
+                    placeholder="120.46M",
+                    on_change=_save_power, args=(i,),
+                )
 
-        with pow_col:
-            st.text_input(
-                "Power",
-                key=f"team_{i}_power",
-                max_chars=10,
-                placeholder="120.46M",
-                on_change=_save_power,
-                args=(i,),
-            )
-    # ============================
-    # Dashboard: Buildings + Research status
-    # ============================
-
-    colBldg, colRes = st.columns([1, 1])
-
-    with colBldg:
+    # ============================ Buildings ============================
+    with col_buildings:
         st.subheader("Buildings")
         st.caption("What’s Cookin’")
         try:
             up_set, next_set = bldg_tracking_load_sets_cached()  # 🔨 / 🧱
         except Exception:
             up_set, next_set = set(), set()
-
         if up_set:
             for nm in sorted(up_set):
                 st.markdown(f"🔨 **{nm}**")
@@ -427,19 +420,17 @@ if page == "Dashboard":
         else:
             st.markdown("🧱 _Nothing on deck_")
 
-    with colRes:
+    # ============================ Research ============================
+    with col_research:
         st.subheader("Research")
-        # pull all tracked / priority across categories and group for display
+        st.caption("What’s Cookin’")
         try:
             res = sb.table("research_tracking").select("category,name,tracked,priority").execute()
             rows = res.data or []
         except Exception:
             rows = []
-
         from collections import defaultdict
-        hot_by_cat = defaultdict(list)   # 🔥 in-progress
-        star_by_cat = defaultdict(list)  # ⭐ next up
-
+        hot_by_cat, star_by_cat = defaultdict(list), defaultdict(list)
         for r in rows:
             cat = r.get("category") or "Other"
             name = r.get("name") or ""
@@ -448,7 +439,6 @@ if page == "Dashboard":
             if r.get("priority"):
                 star_by_cat[cat].append(name)
 
-        st.caption("What’s Cookin’")
         if any(hot_by_cat.values()):
             for cat in sorted(hot_by_cat.keys()):
                 items = " · ".join(sorted(hot_by_cat[cat]))
@@ -464,115 +454,70 @@ if page == "Dashboard":
         else:
             st.markdown("⭐ _Nothing on deck_")
 
+    # ===== below: your existing progress section unchanged =====
     st.divider()
-    st.subheader("Buildings")
-
-    # --- First row (4 columns): raw values ---
+    st.subheader("Building Progress")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.markdown("**Wall**")
-        st.write(get_level(kv, "Wall"))
-        st.markdown("**Tech Center**")
-        st.write(max_series(kv, "Tech Center", SERIES["Tech Center"]))
-        st.markdown("**Tank/Air/Missile Center**")
-        st.write(max_centers(kv))
+        st.markdown("**Wall**"); st.write(get_level(kv, "Wall"))
+        st.markdown("**Tech Center**"); st.write(max_series(kv, "Tech Center", SERIES["Tech Center"]))
+        st.markdown("**Tank/Air/Missile Center**"); st.write(max_centers(kv))
     with c2:
-        st.markdown("**Barracks**")
-        st.write(max_series(kv, "Barracks", SERIES["Barracks"]))
-        st.markdown("**Hospital**")
-        st.write(max_series(kv, "Hospital", SERIES["Hospital"]))
-        st.markdown("**Training Grounds**")
-        st.write(max_series(kv, "Drill Ground", SERIES["Drill Ground"]))
-    with c3:
-        st.empty()
-    with c4:
-        st.empty()
+        st.markdown("**Barracks**"); st.write(max_series(kv, "Barracks", SERIES["Barracks"]))
+        st.markdown("**Hospital**"); st.write(max_series(kv, "Hospital", SERIES["Hospital"]))
+        st.markdown("**Training Grounds**"); st.write(max_series(kv, "Drill Ground", SERIES["Drill Ground"]))
+    with c3: st.empty()
+    with c4: st.empty()
 
     st.write("")
 
-    # --- Second row: percentages vs HQ with gradient chips ---
     c1, c2, c3, c4 = st.columns(4)
-
     def pct_of_hq_sum(base: str, series_key: str) -> float:
-        if hq <= 0:
-            return 0.0
-        rng = SERIES[series_key]
-        total = sum_series(kv, base, rng)
-        denom = len(rng) * hq
+        if hq <= 0: return 0.0
+        rng = SERIES[series_key]; total = sum_series(kv, base, rng); denom = len(rng) * hq
         return (total / denom) * 100.0 if denom > 0 else 0.0
-
     def pct_of_hq_single(name: str) -> float:
-        if hq <= 0:
-            return 0.0
+        if hq <= 0: return 0.0
         return (get_level(kv, name) / hq) * 100.0
 
     with c1:
-        st.markdown("**Tech Center**")
-        st.markdown(pct_chip(pct_of_hq_sum("Tech Center", "Tech Center"), ""), unsafe_allow_html=True)
+        st.markdown("**Tech Center**"); st.markdown(pct_chip(pct_of_hq_sum("Tech Center", "Tech Center"), ""), unsafe_allow_html=True)
         st.markdown("**Tank/Air/Missile**")
-        p_centers = 0.0
-        present = [c for c in CENTER_NAMES if c in kv]
-        if hq > 0 and present:
-            s = sum(get_level(kv, c) for c in present)
-            p_centers = (s / (len(present) * hq)) * 100.0
+        p_centers = 0.0; present = [c for c in CENTER_NAMES if c in kv]
+        if hq > 0 and present: s = sum(get_level(kv, c) for c in present); p_centers = (s / (len(present) * hq)) * 100.0
         st.markdown(pct_chip(p_centers, ""), unsafe_allow_html=True)
-        st.markdown("**Barracks**")
-        st.markdown(pct_chip(pct_of_hq_sum("Barracks", "Barracks"), ""), unsafe_allow_html=True)
-        st.markdown("**Hospital**")
-        st.markdown(pct_chip(pct_of_hq_sum("Hospital", "Hospital"), ""), unsafe_allow_html=True)
-        st.markdown("**Training Grounds**")
-        st.markdown(pct_chip(pct_of_hq_sum("Drill Ground", "Drill Ground"), ""), unsafe_allow_html=True)
-        st.markdown("**Emergency Center**")
-        st.markdown(pct_chip(pct_of_hq_single("Emergency Center"), ""), unsafe_allow_html=True)
-        st.markdown("**Squads**")
-        st.markdown(pct_chip(pct_of_hq_sum("Drill Ground", "Drill Ground"), ""), unsafe_allow_html=True)
-        st.markdown("**Alert Tower**")
-        st.markdown(pct_chip(pct_of_hq_single("Alert Tower"), ""), unsafe_allow_html=True)
-        st.markdown("**Recon Plane**")
-        st.markdown(pct_chip(pct_of_hq_sum("Recon Plane", "Recon Plane"), ""), unsafe_allow_html=True)
+        st.markdown("**Barracks**"); st.markdown(pct_chip(pct_of_hq_sum("Barracks", "Barracks"), ""), unsafe_allow_html=True)
+        st.markdown("**Hospital**"); st.markdown(pct_chip(pct_of_hq_sum("Hospital", "Hospital"), ""), unsafe_allow_html=True)
+        st.markdown("**Training Grounds**"); st.markdown(pct_chip(pct_of_hq_sum("Drill Ground", "Drill Ground"), ""), unsafe_allow_html=True)
+        st.markdown("**Emergency Center**"); st.markdown(pct_chip(pct_of_hq_single("Emergency Center"), ""), unsafe_allow_html=True)
+        st.markdown("**Squads**"); st.markdown(pct_chip(pct_of_hq_sum("Drill Ground", "Drill Ground"), ""), unsafe_allow_html=True)
+        st.markdown("**Alert Tower**"); st.markdown(pct_chip(pct_of_hq_single("Alert Tower"), ""), unsafe_allow_html=True)
+        st.markdown("**Recon Plane**"); st.markdown(pct_chip(pct_of_hq_sum("Recon Plane", "Recon Plane"), ""), unsafe_allow_html=True)
 
     with c2:
-        st.markdown("**Coin Vault**")
-        st.markdown(pct_chip(pct_of_hq_single("Coin Vault"), ""), unsafe_allow_html=True)
-        st.markdown("**Iron Warehouse**")
-        st.markdown(pct_chip(pct_of_hq_single("Iron Warehouse"), ""), unsafe_allow_html=True)
-        st.markdown("**Food Warehouse**")
-        st.markdown(pct_chip(pct_of_hq_single("Food Warehouse"), ""), unsafe_allow_html=True)
-        st.markdown("**Oil Well**")
-        st.markdown(pct_chip(pct_of_hq_sum("Oil Well", "Oil Well"), ""), unsafe_allow_html=True)
-        st.markdown("**Gold Mine**")
-        st.markdown(pct_chip(pct_of_hq_sum("Gold Mine", "Gold Mine"), ""), unsafe_allow_html=True)
-        st.markdown("**Iron Mine**")
-        st.markdown(pct_chip(pct_of_hq_sum("Iron Mine", "Iron Mine"), ""), unsafe_allow_html=True)
-        st.markdown("**Farmland**")
-        st.markdown(pct_chip(pct_of_hq_sum("Farmland", "Farmland"), ""), unsafe_allow_html=True)
-        st.markdown("**Smelter**")
-        st.markdown(pct_chip(pct_of_hq_sum("Smelter", "Smelter"), ""), unsafe_allow_html=True)
+        st.markdown("**Coin Vault**"); st.markdown(pct_chip(pct_of_hq_single("Coin Vault"), ""), unsafe_allow_html=True)
+        st.markdown("**Iron Warehouse**"); st.markdown(pct_chip(pct_of_hq_single("Iron Warehouse"), ""), unsafe_allow_html=True)
+        st.markdown("**Food Warehouse**"); st.markdown(pct_chip(pct_of_hq_single("Food Warehouse"), ""), unsafe_allow_html=True)
+        st.markdown("**Oil Well**"); st.markdown(pct_chip(pct_of_hq_sum("Oil Well", "Oil Well"), ""), unsafe_allow_html=True)
+        st.markdown("**Gold Mine**"); st.markdown(pct_chip(pct_of_hq_sum("Gold Mine", "Gold Mine"), ""), unsafe_allow_html=True)
+        st.markdown("**Iron Mine**"); st.markdown(pct_chip(pct_of_hq_sum("Iron Mine", "Iron Mine"), ""), unsafe_allow_html=True)
+        st.markdown("**Farmland**"); st.markdown(pct_chip(pct_of_hq_sum("Farmland", "Farmland"), ""), unsafe_allow_html=True)
+        st.markdown("**Smelter**"); st.markdown(pct_chip(pct_of_hq_sum("Smelter", "Smelter"), ""), unsafe_allow_html=True)
 
     with c3:
-        st.markdown("**Alliance Center**")
-        st.markdown(pct_chip(pct_of_hq_single("Alliance Center"), ""), unsafe_allow_html=True)
-        st.markdown("**Builder's Hut**")
-        st.markdown(pct_chip(pct_of_hq_single("Builder's Hut"), ""), unsafe_allow_html=True)
-        st.markdown("**Tavern**")
-        st.markdown(pct_chip(pct_of_hq_single("Tavern"), ""), unsafe_allow_html=True)
-        st.markdown("**Technical Institute**")
-        st.markdown(pct_chip(pct_of_hq_single("Technical Institute"), ""), unsafe_allow_html=True)
-        st.markdown("**Training Base**")
-        st.markdown(pct_chip(pct_of_hq_sum("Training Base", "Training Base"), ""), unsafe_allow_html=True)
+        st.markdown("**Alliance Center**"); st.markdown(pct_chip(pct_of_hq_single("Alliance Center"), ""), unsafe_allow_html=True)
+        st.markdown("**Builder's Hut**"); st.markdown(pct_chip(pct_of_hq_single("Builder's Hut"), ""), unsafe_allow_html=True)
+        st.markdown("**Tavern**"); st.markdown(pct_chip(pct_of_hq_single("Tavern"), ""), unsafe_allow_html=True)
+        st.markdown("**Technical Institute**"); st.markdown(pct_chip(pct_of_hq_single("Technical Institute"), ""), unsafe_allow_html=True)
+        st.markdown("**Training Base**"); st.markdown(pct_chip(pct_of_hq_sum("Training Base", "Training Base"), ""), unsafe_allow_html=True)
 
     with c4:
-        st.markdown("**Drone Parts Workshop**")
-        st.markdown(pct_chip(pct_of_hq_single("Drone Parts Workshop"), ""), unsafe_allow_html=True)
-        st.markdown("**Chip Lab**")
-        st.markdown(pct_chip(pct_of_hq_single("Chip Lab"), ""), unsafe_allow_html=True)
-        st.markdown("**Component Factory**")
-        st.markdown(pct_chip(pct_of_hq_single("Component Factory"), ""), unsafe_allow_html=True)
-        st.markdown("**Gear Factory**")
-        st.markdown(pct_chip(pct_of_hq_single("Gear Factory"), ""), unsafe_allow_html=True)
-        st.markdown("**Material Workshop**")
-        st.markdown(pct_chip(pct_of_hq_sum("Material Workshop", "Material Workshop"), ""), unsafe_allow_html=True)
-# --- END DASHBOARD ----------------------------------------------------------
+        st.markdown("**Drone Parts Workshop**"); st.markdown(pct_chip(pct_of_hq_single("Drone Parts Workshop"), ""), unsafe_allow_html=True)
+        st.markdown("**Chip Lab**"); st.markdown(pct_chip(pct_of_hq_single("Chip Lab"), ""), unsafe_allow_html=True)
+        st.markdown("**Component Factory**"); st.markdown(pct_chip(pct_of_hq_single("Component Factory"), ""), unsafe_allow_html=True)
+        st.markdown("**Gear Factory**"); st.markdown(pct_chip(pct_of_hq_single("Gear Factory"), ""), unsafe_allow_
+
+
 
 
 # ============================
