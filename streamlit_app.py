@@ -492,99 +492,63 @@ if page == "Dashboard":
         else:
             st.markdown("🧱 _Nothing on deck_")
 
-    # --- Research (What’s Cookin’) — token match to research.data; show level → level+1 ---
+    # --- Research (single table: research_data; shows level → level+1) ---
     with col_research:
         st.subheader("Research")
 
-        # 1) trackers (same as before)
+        # Read everything we need from the single table
         try:
-            trk = sb.table("research_tracking").select("category,name,tracked,priority").execute()
-            trk_rows = trk.data or []
+            res = sb.table("research_data").select(
+                "category,name,level,tracked,priority,order_index"
+            ).execute()
+            rows = res.data or []
         except Exception:
-            trk_rows = []
+            rows = []
 
-        # 2) live levels (only need name + level)
-        try:
-            dat = sb.table("research.data").select("name,level").execute()
-            dat_rows = dat.data or []
-        except Exception:
-            dat_rows = []
-
-        # 3) token helpers (robust to “2 (Missile)” vs “(Missile)” vs “VIII”)
-        import re
-        ROMAN = {"i","ii","iii","iv","v","vi","vii","viii","ix","x","xi","xii","xiii","xiv","xv","xvi","xvii","xviii","xix","xx"}
-
-        def tokens(s: str) -> set[str]:
-            if not s: return set()
-            s = s.lower()
-            # keep letters/numbers/parentheses; split on whitespace
-            s = re.sub(r"[^a-z0-9()\s]", " ", s)
-            toks = re.split(r"\s+", s.strip())
-            # drop pure numbers and roman numerals tokens
-            out = []
-            for t in toks:
-                if not t: continue
-                if t.isdigit(): continue
-                if t in ROMAN: continue
-                out.append(t)
-            return set(out)
-
-        # 4) build data index: list of (token_set, level)
-        data_index = []
-        for r in dat_rows:
-            nm = (r.get("name") or "").strip()
-            lvl = r.get("level")
-            if isinstance(lvl, (int, float)):
-                data_index.append((tokens(nm), int(lvl)))
-
-        # 5) group trackers
+        # Group rows for display
         from collections import defaultdict
-        hot_by_cat = defaultdict(list)
-        star_by_cat = defaultdict(list)
-        for r in trk_rows:
+        hot_by_cat = defaultdict(list)    # tracked == true
+        star_by_cat = defaultdict(list)   # priority == true
+
+        for r in rows:
             cat = (r.get("category") or "Other").strip()
-            nm  = (r.get("name") or "").strip()
             if bool(r.get("tracked")):
-                hot_by_cat[cat].append(nm)
+                hot_by_cat[cat].append(r)
             if bool(r.get("priority")):
-                star_by_cat[cat].append(nm)
+                star_by_cat[cat].append(r)
 
-        # 6) matching: Jaccard similarity on tokens
-        def matched_level(tracked_name: str) -> int | None:
-            t = tokens(tracked_name)
-            best_lv, best_sim = None, 0.0
-            for dt, lv in data_index:
-                if not dt: continue
-                inter = len(t & dt)
-                union = len(t | dt)
-                if union == 0: 
-                    continue
-                sim = inter / union
-                if sim > best_sim:
-                    best_sim, best_lv = sim, lv
-            # accept if reasonably close
-            return best_lv if best_sim >= 0.6 else None
-
-        # 7) render
+        # --- What's Cookin' ---
         st.caption("What’s Cookin’")
         if any(hot_by_cat.values()):
             for cat in sorted(hot_by_cat.keys()):
-                items = []
-                for nm in sorted(hot_by_cat[cat]):
-                    lv = matched_level(nm)
-                    arrow = f" ({lv} → {lv + 1})" if isinstance(lv, int) else ""
-                    items.append(f"{nm}{arrow}")
-                st.markdown(f"🔥 **{cat}** — " + " · ".join(items))
+                # sort by order_index (nulls last), then name
+                items = sorted(
+                    hot_by_cat[cat],
+                    key=lambda x: (x.get("order_index") is None, x.get("order_index"), x.get("name") or "")
+                )
+                labels = []
+                for r in items:
+                    nm = (r.get("name") or "").strip()
+                    lvl = r.get("level")
+                    arrow = f" ({int(lvl)} → {int(lvl)+1})" if isinstance(lvl, (int, float)) else ""
+                    labels.append(f"{nm}{arrow}")
+                st.markdown(f"🔥 **{cat}** — " + " · ".join(labels))
         else:
             st.markdown("🔥 _Nothing in progress_")
 
+        # --- On Deck ---
         st.caption("On Deck")
         if any(star_by_cat.values()):
             for cat in sorted(star_by_cat.keys()):
-                st.markdown(f"⭐ **{cat}** — " + " · ".join(sorted(star_by_cat[cat])))
+                items = sorted(
+                    star_by_cat[cat],
+                    key=lambda x: (x.get("order_index") is None, x.get("order_index"), x.get("name") or "")
+                )
+                st.markdown(f"⭐ **{cat}** — " + " · ".join([(r.get("name") or "").strip() for r in items]))
         else:
             st.markdown("⭐ _Nothing on deck_")
-    # --- END Research column ---
+    # --- END Research ---
+
 
     # --- END Research (What’s Cookin’) ---
 
