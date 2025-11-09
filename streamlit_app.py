@@ -618,32 +618,49 @@ if page == "Dashboard":
         st.markdown("**Material Workshop**")
         st.markdown(pct_chip(pct_of_hq_sum("Material Workshop", "Material Workshop"), ""), unsafe_allow_html=True)
 
-    # --- Research Progress (gradient chips like Buildings) ---
+    # --- Research Progress (gradient chips like Buildings, using live max levels) ---
     st.divider()
     st.subheader("Research Progress")
 
-    # fetch current research rows
     try:
-        res = sb.table("research_tracking").select("category,name").execute()
+        res = sb.table("research_tracking").select("category,name,level,max_level").execute()
         _rrows = res.data or []
     except Exception:
         _rrows = []
 
-    # pick categories dynamically from your data, keep a predictable order for common ones
-    cats_in_data = sorted({(r.get("category") or "Other") for r in _rrows})
-    preferred_order = ["Hero", "Special Forces", "Units", "Base", "Other"]
-    cats = [c for c in preferred_order if c in cats_in_data] + [c for c in cats_in_data if c not in preferred_order]
+    from collections import defaultdict
 
-    # render in 3 columns per row
+    # Group rows by category
+    cat_levels = defaultdict(list)
+    for r in _rrows:
+        cat = r.get("category") or "Other"
+        try:
+            lvl = int(r.get("level") or 0)
+            max_lvl = int(r.get("max_level") or 0)
+            if max_lvl > 0:
+                pct = (lvl / max_lvl) * 100.0
+                cat_levels[cat].append(pct)
+        except Exception:
+            pass
+
+    # Compute per-category average percent
+    cat_pcts = {
+        cat: (sum(pcts) / len(pcts)) if pcts else 0.0
+        for cat, pcts in cat_levels.items()
+    }
+
+    # Decide column layout (3 per row)
+    cats = sorted(cat_pcts.keys())
     for i in range(0, len(cats), 3):
         rc1, rc2, rc3 = st.columns(3)
         row = cats[i:i+3]
-        cols = [rc1, rc2, rc3]
-        for col, cat in zip(cols, row):
+        for col, cat in zip([rc1, rc2, rc3], row):
             with col:
                 st.markdown(f"**{cat}**")
-                pct = _research_pct_by_cat(_rrows, cat)
+                pct = cat_pcts.get(cat, 0.0)
                 st.markdown(pct_chip(pct, ""), unsafe_allow_html=True)
+                
+
 
 # ============================
 # Buildings page
