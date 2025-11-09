@@ -48,7 +48,7 @@ from collections import OrderedDict
 base_buildings = [
     "HQ", "Wall",
     "Tech Center 1-3",
-    "Barracks 1-4", "Barrack 2",
+    "Barracks 1-4", 
     "Drill Ground 1-4",
     "Hospital 1-4", "Emergency Center",
     "Alert Tower", "Recon Plane 1-3",
