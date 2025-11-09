@@ -599,13 +599,15 @@ elif page == "Buildings":
                 to_save = edited[["name", "level"]].copy()
                 changes = []
                 for _, r in to_save.iterrows():
-                    key = r["name"]
+                    key = str(r["name"]).strip()                 # <- sanitize name
                     lvl = int(r.get("level", 0) or 0)
                     if str(current_map.get(key, "")) != str(lvl):
                         changes.append({"key": key, "value": str(lvl)})
+
                 if changes:
-                    sb.table("buildings_kv").upsert(changes).execute()
-                    kv_read_many.clear()   # clear cache so reload shows new values
+                    # <- explicit conflict target so new keys insert, existing keys update
+                    sb.table("buildings_kv").upsert(changes, on_conflict="key").execute()
+                    kv_read_many.clear()    # refresh cached read
                 st.success("Saved")
                 st.rerun()
             except Exception as e:
