@@ -492,29 +492,25 @@ if page == "Dashboard":
         else:
             st.markdown("🧱 _Nothing on deck_")
 
-    # --- Research (What’s Cookin’) — show level → level+1 from research.data ---
+    # --- Research (What’s Cookin’) — restore list + show level → level+1 from research.data ---
     with col_research:
         st.subheader("Research")
 
-        # Load trackers
+        # 1) Load the same tracking rows you had working before
         try:
-            trk = sb.table("research_tracking").select(
-                "category,name,tracked,priority"
-            ).execute()
+            trk = sb.table("research_tracking").select("category,name,tracked,priority").execute()
             trk_rows = trk.data or []
         except Exception:
             trk_rows = []
 
-        # Load live levels from research.data
+        # 2) Load live levels from research.data (only name + level)
         try:
-            dat = sb.table("research.data").select(
-                "name,level"
-            ).execute()
+            dat = sb.table("research.data").select("name,level").execute()
             dat_rows = dat.data or []
         except Exception:
             dat_rows = []
 
-        # Build the matching key: keep "(…)" suffix, drop trailing level (digits or Roman), normalize
+        # 3) Make a robust name key: KEEP "(…)" suffix, drop ONLY trailing level (digits or Roman)
         import re
         ROMAN = r"(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)"
 
@@ -522,21 +518,18 @@ if page == "Dashboard":
             if not s:
                 return ""
             s = s.strip()
-            # case: "... <level> (suffix)"  -> keep suffix, drop level
             m = re.match(rf"^(.*?)(?:\s+(?:\d+|{ROMAN}))\s*(\([^)]*\))\s*$", s, flags=re.IGNORECASE)
             if m:
                 base, suffix = m.group(1), m.group(2)
                 s = f"{base} {suffix}"
             else:
-                # case: "... <level>" -> drop level
                 s = re.sub(rf"\s+(?:\d+|{ROMAN})\s*$", "", s, flags=re.IGNORECASE)
-            # normalize
             s = s.lower()
-            s = re.sub(r"[^a-z0-9()\s]", " ", s)   # keep parentheses
+            s = re.sub(r"[^a-z0-9()\s]", " ", s)
             s = re.sub(r"\s+", " ", s).strip()
             return s
 
-        # Map from research.data: key -> highest observed level
+        # 4) Build a name→level map from research.data using that key
         levels_by_key = {}
         for r in dat_rows:
             nm = (r.get("name") or "").strip()
@@ -548,19 +541,19 @@ if page == "Dashboard":
                     if k not in levels_by_key or v > levels_by_key[k]:
                         levels_by_key[k] = v
 
-        # Build display lists from tracking
+        # 5) Group the trackers exactly like before
         from collections import defaultdict
-        hot_by_cat = defaultdict(list)   # 🔥 in-progress
-        star_by_cat = defaultdict(list)  # ⭐ on deck
+        hot_by_cat = defaultdict(list)
+        star_by_cat = defaultdict(list)
         for r in trk_rows:
             cat = (r.get("category") or "Other").strip()
             nm  = (r.get("name") or "").strip()
-            if r.get("tracked"):
+            if bool(r.get("tracked")):
                 hot_by_cat[cat].append(nm)
-            if r.get("priority"):
+            if bool(r.get("priority")):
                 star_by_cat[cat].append(nm)
 
-        # Render: What’s Cookin’
+        # 6) Render: What’s Cookin’ (append arrow when we find a level)
         st.caption("What’s Cookin’")
         if any(hot_by_cat.values()):
             for cat in sorted(hot_by_cat.keys()):
@@ -574,7 +567,7 @@ if page == "Dashboard":
         else:
             st.markdown("🔥 _Nothing in progress_")
 
-        # Render: On Deck
+        # 7) Render: On Deck (unchanged)
         st.caption("On Deck")
         if any(star_by_cat.values()):
             for cat in sorted(star_by_cat.keys()):
@@ -582,6 +575,7 @@ if page == "Dashboard":
         else:
             st.markdown("⭐ _Nothing on deck_")
     # --- END Research column ---
+
 
 
     # --- END Research (What’s Cookin’) ---
