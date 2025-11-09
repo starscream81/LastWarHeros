@@ -572,7 +572,6 @@ with col_research:
     else:
         st.markdown("⭐ _Nothing on deck_")
 
-
     # optional: quick debug
     with st.expander("Research matching debug", expanded=False):
         import pandas as pd
