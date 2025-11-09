@@ -620,11 +620,6 @@ if page == "Dashboard":
 
     # --- END Research (What’s Cookin’) ---
 
-    # quick debug so you can see matches
-    with st.expander("Research matching debug", expanded=False):
-        import pandas as pd
-        st.dataframe(pd.DataFrame(debug))
-
     # ===== below: your existing progress section unchanged =====
     st.divider()
     st.subheader("Building Progress")
