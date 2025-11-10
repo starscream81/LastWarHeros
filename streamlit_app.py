@@ -966,7 +966,7 @@ elif page == "Add or Update Hero":
             p_val = float(p_in) if p_in is not None else 0.0
         except Exception:
             p_val = 0.0
-        power = st.number_input("Power", min_value=0.0, step=1.0, value=float(p_val))
+        power = st.number_input("Power", min_value=0, step=1, value=float(p_val))
 
         weapon = st.checkbox("Weapon?", value=bool(v(current, "weapon", False)))
         weapon_level = st.number_input("Weapon Level", min_value=0, max_value=200, value=int(v(current, "weapon_level", 0) or 0), step=1)
