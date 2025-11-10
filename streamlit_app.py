@@ -984,61 +984,88 @@ elif page == "Add or Update Hero":
 
     st.divider()
 
-    # Validate and actions
+    # -----------------------------
+    # Validate and action buttons
+    # -----------------------------
     errors = []
     if not name.strip():
         errors.append("Name is required.")
+
+    # helper to coerce numerics safely
+    def _to_int(x, default=0):
+        try:
+            if x is None or str(x).strip() == "":
+                return default
+            return int(float(x))
+        except Exception:
+            return default
+
+    def _to_float(x, default=0.0):
+        try:
+            if x is None or str(x).strip() == "":
+                return default
+            return float(x)
+        except Exception:
+            return default
 
     if errors:
         for e in errors:
             st.error(e)
     else:
-        col_save, col_delete = st.columns([1,1])
+        col_save, col_delete = st.columns([1, 1])
 
-    # Save / Reload buttons for levels (KV)
-    colA, colB = st.columns(2)
+        # Build payload once from form values
+        hero_payload = {
+            "name": name.strip(),
+            "type": (type_ or "").strip(),
+            "role": (role or "").strip(),
+            "team": (team or "").strip(),
+            "level": _to_int(level, 0),
+            "power": _to_float(power, 0.0),
 
-    # render the table editor and CAPTURE its return value
-    editor_df = st.data_editor(
-        df,                      # your current dataframe
-        key="bldg_editor",
-        use_container_width=True,
-        hide_index=True
-    )
+            # equipment
+            "weapon": bool(weapon),
+            "weapon_level": _to_int(weapon_level, 0),
+            "max_skill_level": _to_int(max_skill_level, 0),
 
-    with colA:
-        if st.button("Save changes", use_container_width=True):
-            try:
-                to_save = editor_df[["name", "level"]].copy()
-                to_save["level"] = (
-                    to_save["level"]
-                    .fillna(0)
-                    .apply(lambda x: int(float(x)) if str(x).strip() != "" else 0)
-                )
+            "rail_gun": _to_int(rail_gun, 0),
+            "rail_gun_stars": (rail_gun_stars or "").strip(),
+            "armor": _to_int(armor, 0),
+            "armor_stars": (armor_stars or "").strip(),
+            "data_chip": _to_int(data_chip, 0),
+            "data_chip_stars": (data_chip_stars or "").strip(),
+            "radar": _to_int(radar, 0),
+            "radar_stars": (radar_stars or "").strip(),
+        }
 
-                changes = []
-                for _, r in to_save.iterrows():
-                    key = str(r["name"]).strip()
-                    lvl = int(float(r.get("level", 0) or 0))
-                    if str(current_map.get(key, "")) != str(lvl):
-                        changes.append({"key": key, "value": str(lvl)})
+        # SAVE
+        with col_save:
+            if st.button("Save", use_container_width=True):
+                try:
+                    if current and current.get("id"):
+                        # update existing
+                        sb.table("heroes").update(hero_payload).eq("id", current["id"]).execute()
+                    else:
+                        # insert new (if you have a unique constraint on name, you could use upsert with on_conflict="name")
+                        sb.table("heroes").insert(hero_payload).execute()
 
-                if changes:
-                    # if RLS requires it, add user_id to each change:
-                    # for ch in changes: ch["user_id"] = auth_user_id
-                    sb.table("buildings_kv").upsert(changes).execute()
-                    st.success(f"Saved {len(changes)} change(s)")
-                else:
-                    st.info("No changes to save")
+                    st.success("Hero saved")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Save failed: {e}")
 
-                st.rerun()
-            except Exception as e:
-                st.error(f"Save failed: {e}")
-                              
-    with colB:
-        if st.button("Reload from Supabase", use_container_width=True):
-            st.rerun()
-
+        # DELETE (only when editing an existing row)
+        with col_delete:
+            if current and current.get("id"):
+                if st.button("Delete", type="secondary", use_container_width=True):
+                    try:
+                        sb.table("heroes").delete().eq("id", current["id"]).execute()
+                        st.success("Hero deleted")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Delete failed: {e}")
+            else:
+                st.caption("Select an existing hero to enable Delete.")
 
 # ============================
 # Research helpers (top-level)
