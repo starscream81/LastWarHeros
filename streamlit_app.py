@@ -960,17 +960,23 @@ elif page == "Add or Update Hero":
     with colB:
         level = st.number_input("Level", min_value=0, max_value=200, value=int(v(current, "level", 0) or 0), step=1)
 
-        # power is numeric/decimal in DB; allow float entry
+        # Power as integer (no .00)
         p_in = v(current, "power", 0)
         try:
-            p_val = float(p_in) if p_in is not None else 0.0
+            p_val = int(float(p_in)) if p_in is not None else 0
         except Exception:
-            p_val = 0.0
+            p_val = 0
         power = st.number_input("Power", min_value=0, step=1, value=int(p_val))
-
+    
         weapon = st.checkbox("Weapon?", value=bool(v(current, "weapon", False)))
         weapon_level = st.number_input("Weapon Level", min_value=0, max_value=200, value=int(v(current, "weapon_level", 0) or 0), step=1)
         max_skill_level = st.number_input("Max Skill Level", min_value=0, max_value=40, value=int(v(current, "max_skill_level", 0) or 0), step=1)
+
+        # Add skill levels (int4)
+        skill1 = st.number_input("Skill 1", min_value=0, max_value=40, value=int(v(current, "skill1", 0) or 0), step=1)
+        skill2 = st.number_input("Skill 2", min_value=0, max_value=40, value=int(v(current, "skill2", 0) or 0), step=1)
+        skill3 = st.number_input("Skill 3", min_value=0, max_value=40, value=int(v(current, "skill3", 0) or 0), step=1)
+
 
     with colC:
         rail_gun = st.number_input("Rail Gun", min_value=0, max_value=200, value=int(v(current, "rail_gun", 0) or 0), step=1)
@@ -1027,6 +1033,10 @@ elif page == "Add or Update Hero":
             "weapon": bool(weapon),
             "weapon_level": _to_int(weapon_level, 0),
             "max_skill_level": _to_int(max_skill_level, 0),
+            "skill1": _to_int(skill1, 0),
+            "skill2": _to_int(skill2, 0),
+            "skill3": _to_int(skill3, 0),
+
 
             "rail_gun": _to_int(rail_gun, 0),
             "rail_gun_stars": (rail_gun_stars or "").strip(),
