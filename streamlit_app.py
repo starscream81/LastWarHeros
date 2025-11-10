@@ -998,28 +998,47 @@ elif page == "Add or Update Hero":
     # Save / Reload buttons for levels (KV)
     colA, colB = st.columns(2)
 
+    # render the table editor and CAPTURE its return value
+    editor_df = st.data_editor(
+        df,                      # your current dataframe
+        key="bldg_editor",
+        use_container_width=True,
+        hide_index=True
+    )
+
     with colA:
         if st.button("Save changes", use_container_width=True):
             try:
-                # we only need name + level to save
-                to_save = edited[["name", "level"]].copy()
+                # only name + level are needed for KV writes
+                to_save = editor_df[["name", "level"]].copy()
+
+                # coerce blanks/NaN to 0 and to int safely
+                to_save["level"] = (
+                    to_save["level"]
+                    .fillna(0)
+                    .apply(lambda x: int(float(x)) if str(x).strip() != "" else 0)
+                )
 
                 changes = []
                 for _, r in to_save.iterrows():
                     key = r["name"]
-                    lvl = int(r.get("level", 0) or 0)
-                    # compare to current_map (string compare is fine since KV stores text)
+                    lvl = int(r["level"])
+                    # current_map: dict like {"HQ": "33", "Wall": "32", ...}
                     if str(current_map.get(key, "")) != str(lvl):
-                        changes.append({"key": key, "value": str(lvl)})
+                    changes.append({"key": key, "value": str(lvl)})
 
                 if changes:
+                    # if your table requires user_id via RLS, include it here:
+                    # for ch in changes: ch["user_id"] = auth_user_id
                     sb.table("buildings_kv").upsert(changes).execute()
+                    st.success(f"Saved {len(changes)} change(s)")
+                else:
+                    st.info("No changes to save")
 
-                st.success("Saved")
                 st.rerun()
             except Exception as e:
                 st.error(f"Save failed: {e}")
-
+                              
     with colB:
         if st.button("Reload from Supabase", use_container_width=True):
             st.rerun()
