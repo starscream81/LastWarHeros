@@ -800,7 +800,7 @@ elif page == "Buildings":
 # ============================
 elif page == "Heroes":
     st.header("Heroes")
-    st.write("Sorted by Power (desc). Role-based highlights + green 5-star override + clean numbers.")
+    st.write("Don't be dumb and remember to update.")
 
     try:
         cols = (
