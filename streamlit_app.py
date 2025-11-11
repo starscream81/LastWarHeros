@@ -1,8 +1,8 @@
 import streamlit as st
 from supabase import create_client
 
-SB_URL = st.secrets.get"https://evpkmrszohaukxepyvpt.supabase.co"
-SB_KEY = st.secrets.get("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV2cGttcnN6b2hhdWt4ZXB5dnB0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjIzNzIyMDUsImV4cCI6MjA3Nzk0ODIwNX0.cNuGKqEK_BtYSfnAVaakQngSgt6CuGa2Duaev2-xBJk")
+SB_URL = st.secrets.get"suabase_url"
+SB_KEY = st.secrets.get("supabase_key")
 
 if not SB_URL or not SB_KEY:
     st.error("Supabase credentials missing. Add them in Streamlit Cloud or .streamlit/secrets.toml")
