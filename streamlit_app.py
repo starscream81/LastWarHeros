@@ -1,7 +1,7 @@
 import streamlit as st
 from supabase import create_client
 
-SB_URL = st.secrets.get"suabase_url"
+SB_URL = st.secrets.get"supabase_url"
 SB_KEY = st.secrets.get("supabase_key")
 
 if not SB_URL or not SB_KEY:
