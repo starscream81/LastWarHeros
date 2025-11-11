@@ -41,6 +41,334 @@ try:
     sb.table("buildings_kv").select("key").limit(1).execute()
 except Exception:
     st.warning("⚠️ Supabase connection failed. Check URL and key.")
+    
+# --------------------------------------------------
+# Authentication (Email+Password, Email OTP, OAuth)
+# --------------------------------------------------
+"""
+Streamlit app with Supabase authentication, per user filtering and per field autosave.
+
+Requirements:
+  pip install streamlit supabase==2.* python-dotenv
+
+Secrets or env vars required:
+  SUPABASE_URL
+  SUPABASE_ANON_KEY
+
+Tables used:
+  buildings_kv  (columns: owner_id uuid, key text, value text, updated_at timestamptz default now())
+  dashboard_settings (owner_id uuid, key text, value text)
+  research_tracking (owner_id uuid, key text, value text)
+  buildings_tracking (owner_id uuid, key text, value text)
+
+RLS owner policies must already be enabled as the user stated.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass
+from typing import Dict, Optional, Tuple
+
+import streamlit as st
+from supabase import Client, create_client
+
+# --------------------------------------------------------------------------------------
+# Supabase client and auth helpers
+# --------------------------------------------------------------------------------------
+
+@st.cache_resource(show_spinner=False)
+def get_supabase() -> Client:
+    url = os.getenv("SUPABASE_URL", st.secrets.get("SUPABASE_URL"))
+    key = os.getenv("SUPABASE_ANON_KEY", st.secrets.get("SUPABASE_ANON_KEY"))
+    if not url or not key:
+        st.error("Missing SUPABASE_URL or SUPABASE_ANON_KEY. Add them to .env or Streamlit secrets.")
+        st.stop()
+    return create_client(url, key)
+
+
+def get_session_user(sb: Client) -> Tuple[Optional[str], Optional[dict]]:
+    """Return (user_id, user_dict). Uses cached session in st.session_state."""
+    try:
+        user_resp = sb.auth.get_user()
+        if user_resp and user_resp.user:
+            return user_resp.user.id, user_resp.user.model_dump()  # type: ignore
+    except Exception:
+        pass
+    return None, None
+
+
+@dataclass
+class AuthResult:
+    user_id: str
+    email: str
+
+
+def _oauth_button(sb: Client, provider: str, label: str):
+    if st.button(label, use_container_width=True, key=f"oauth::{provider}"):
+        try:
+            # Redirect back to current app URL after OAuth
+            redirect_to = st.experimental_get_query_params().get("_redirect", [None])[0]
+            if not redirect_to:
+                # Best effort: build from request base (works on Streamlit Cloud and most setups)
+                redirect_to = os.getenv("OAUTH_REDIRECT", "http://localhost:8501")
+            sb.auth.sign_in_with_oauth({
+                "provider": provider,
+                "options": {"redirect_to": redirect_to}
+            })
+            st.stop()
+        except Exception as e:
+            st.error(f"OAuth start failed: {e}")
+
+
+def auth_ui(sb: Client) -> Optional[AuthResult]:
+    st.sidebar.header("Sign in")
+    tabs = st.sidebar.tabs(["Password", "Email code", "Google / GitHub"])
+
+    # 1) Email + Password
+    with tabs[0]:
+        with st.form("auth_password_form", clear_on_submit=False):
+            email = st.text_input("Email", key="auth_email_pw")
+            password = st.text_input("Password", type="password", key="auth_password_pw")
+            col_a, col_b = st.columns(2)
+            sign_in = col_a.form_submit_button("Sign in")
+            sign_up = col_b.form_submit_button("Create account")
+        if sign_in:
+            try:
+                data = sb.auth.sign_in_with_password({"email": email, "password": password})
+                st.success("Signed in")
+                return AuthResult(user_id=data.user.id, email=data.user.email or "")
+            except Exception as e:
+                st.error(f"Sign in failed: {e}")
+        if sign_up:
+            try:
+                data = sb.auth.sign_up({"email": email, "password": password})
+                st.info("Account created. If confirmation is required, check email.")
+            except Exception as e:
+                st.error(f"Sign up failed: {e}")
+
+    # 2) Email one-time code (no password)
+    with tabs[1]:
+        st.write("We will send a 6-digit code to your email.")
+        with st.form("auth_otp_form", clear_on_submit=False):
+            email_otp = st.text_input("Email", key="auth_email_otp")
+            col1, col2 = st.columns(2)
+            send_code = col1.form_submit_button("Send code")
+            verify_now = col2.form_submit_button("I already have a code")
+        if send_code:
+            try:
+                sb.auth.sign_in_with_otp({"email": email_otp, "should_create_user": True})
+                st.success("Code sent. Check your inbox and paste it below.")
+            except Exception as e:
+                st.error(f"Could not send code: {e}")
+        if verify_now:
+            code = st.text_input("Enter 6-digit code", key="auth_email_code")
+            if st.button("Verify code"):
+                try:
+                    data = sb.auth.verify_otp({
+                        "email": email_otp,
+                        "token": code,
+                        "type": "email"
+                    })
+                    st.success("Signed in")
+                    return AuthResult(user_id=data.user.id, email=data.user.email or "")
+                except Exception as e:
+                    st.error(f"Verification failed: {e}")
+
+    # 3) OAuth providers (Google / GitHub)
+    with tabs[2]:
+        st.caption("You may need to configure these providers in Supabase Auth settings.")
+        _oauth_button(sb, "google", "Continue with Google")
+        _oauth_button(sb, "github", "Continue with GitHub")
+
+    return None
+
+
+# --------------------------------------------------------------------------------------
+# Data access helpers. All queries are scoped by owner_id and rely on RLS.
+# --------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------
+
+def load_kv(sb: Client, table: str, owner_id: str) -> Dict[str, str]:
+    res = sb.table(table).select("key,value").eq("owner_id", owner_id).execute()
+    rows = res.data or []
+    return {r["key"]: r["value"] for r in rows}
+
+
+def set_kv(sb: Client, table: str, owner_id: str, key_name: str, value: str) -> None:
+    payload = {"owner_id": owner_id, "key": key_name, "value": value}
+    # Upsert on unique constraint (owner_id, key). Make sure the table has this constraint
+    sb.table(table).upsert(payload, on_conflict="owner_id,key").execute()
+
+
+# --------------------------------------------------------------------------------------
+# UI widgets with autosave
+# --------------------------------------------------------------------------------------
+
+def autosave_text_input(
+    sb: Client,
+    table: str,
+    owner_id: str,
+    label: str,
+    key_name: str,
+    initial: str,
+    help_text: Optional[str] = None,
+):
+    widget_key = f"kv_input::{table}::{key_name}"
+    if widget_key not in st.session_state:
+        st.session_state[widget_key] = initial
+
+    def _save():
+        val = st.session_state.get(widget_key, "")
+        try:
+            set_kv(sb, table, owner_id, key_name, str(val))
+            st.toast(f"Saved {label}")
+        except Exception as e:
+            st.error(f"Could not save {label}: {e}")
+
+    st.text_input(label, value=st.session_state[widget_key], key=widget_key, on_change=_save, help=help_text)
+
+
+def autosave_number_input(
+    sb: Client,
+    table: str,
+    owner_id: str,
+    label: str,
+    key_name: str,
+    initial: float | int,
+    min_value: Optional[float | int] = None,
+    max_value: Optional[float | int] = None,
+    step: Optional[float | int] = 1,
+    help_text: Optional[str] = None,
+):
+    widget_key = f"kv_num::{table}::{key_name}"
+    if widget_key not in st.session_state:
+        st.session_state[widget_key] = initial
+
+    def _save():
+        val = st.session_state.get(widget_key, initial)
+        try:
+            set_kv(sb, table, owner_id, key_name, str(val))
+            st.toast(f"Saved {label}")
+        except Exception as e:
+            st.error(f"Could not save {label}: {e}")
+
+    st.number_input(
+        label,
+        value=st.session_state[widget_key],
+        min_value=min_value,
+        max_value=max_value,
+        step=step,
+        key=widget_key,
+        on_change=_save,
+        help=help_text,
+    )
+
+
+# --------------------------------------------------------------------------------------
+# Pages
+# --------------------------------------------------------------------------------------
+
+BUILDINGS = [
+    "HQ",
+    "Wall",
+    "Alliance Center",
+    "Garage",
+    "Shelter",
+    "Hospital",
+]
+
+
+def page_dashboard(sb: Client, owner_id: str):
+    st.title("LastWar Heroes Dashboard")
+
+    st.subheader("Squad Power")
+    kv = load_kv(sb, "dashboard_settings", owner_id)
+
+    autosave_number_input(sb, "dashboard_settings", owner_id, "Tank", "squad_power_tank", int(kv.get("squad_power_tank", 0)))
+    autosave_number_input(sb, "dashboard_settings", owner_id, "Air", "squad_power_air", int(kv.get("squad_power_air", 0)))
+    autosave_number_input(sb, "dashboard_settings", owner_id, "Mix 1", "squad_power_mix1", int(kv.get("squad_power_mix1", 0)))
+    autosave_number_input(sb, "dashboard_settings", owner_id, "Mix 2", "squad_power_mix2", int(kv.get("squad_power_mix2", 0)))
+
+    st.divider()
+    st.subheader("Notes")
+    autosave_text_input(sb, "dashboard_settings", owner_id, "What is cooking", "whats_cookin", kv.get("whats_cookin", ""))
+    autosave_text_input(sb, "dashboard_settings", owner_id, "On deck", "on_deck", kv.get("on_deck", ""))
+
+
+def page_buildings(sb: Client, owner_id: str):
+    st.title("Buildings")
+    kv = load_kv(sb, "buildings_kv", owner_id)
+
+    st.caption("Values save when you tab or hit enter")
+    for name in BUILDINGS:
+        key_name = f"building::{name}::level"
+        initial = int(kv.get(key_name, 0))
+        autosave_number_input(
+            sb,
+            "buildings_kv",
+            owner_id,
+            f"{name} level",
+            key_name,
+            initial,
+            min_value=0,
+            max_value=50,
+            step=1,
+        )
+
+
+def page_research(sb: Client, owner_id: str):
+    st.title("Research")
+    kv = load_kv(sb, "research_tracking", owner_id)
+
+    autosave_text_input(sb, "research_tracking", owner_id, "What is cooking", "research_cookin", kv.get("research_cookin", ""))
+    autosave_text_input(sb, "research_tracking", owner_id, "On deck", "research_on_deck", kv.get("research_on_deck", ""))
+
+
+# --------------------------------------------------------------------------------------
+# App layout
+# --------------------------------------------------------------------------------------
+
+def main():
+    st.set_page_config(page_title="LastWar Heroes", layout="wide")
+    sb = get_supabase()
+
+    # Try to use existing user
+    user_id, _ = get_session_user(sb)
+
+    # Sign in or show profile in sidebar
+    if not user_id:
+        auth = auth_ui(sb)
+        if not auth:
+            st.stop()
+        user_id = auth.user_id
+    else:
+        with st.sidebar:
+            st.success("Signed in")
+            if st.button("Sign out"):
+                try:
+                    sb.auth.sign_out()
+                finally:
+                    st.session_state["sb_session"] = None
+                    st.rerun()
+
+    # At this point we have a user and the client has the JWT set so RLS applies
+
+    st.sidebar.title("Navigation")
+    page = st.sidebar.radio("Go to", ["Dashboard", "Buildings", "Research"], index=0)
+
+    if page == "Dashboard":
+        page_dashboard(sb, user_id)
+    elif page == "Buildings":
+        page_buildings(sb, user_id)
+    else:
+        page_research(sb, user_id)
+
+
+if __name__ == "__main__":
+    main()
+
 
 # --------------------------------------------------
 # Data model: Buildings (KV) — keep user's order
