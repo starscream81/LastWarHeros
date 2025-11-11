@@ -1,50 +1,45 @@
+# -----------------------------
+# Supabase client (cached)
+# -----------------------------
+import os
 import streamlit as st
-from supabase import create_client
+from supabase import create_client  # no need to import Client if you don't annotate
 
-# Correct way to read from secrets
-SB_URL = st.secrets.get("supabase_url")
-SB_KEY = st.secrets.get("supabase_key")
-
-if not SB_URL or not SB_KEY:
-    st.error("Supabase credentials missing. Add them to Streamlit Cloud Secrets or .streamlit/secrets.toml")
-    st.stop()
-
-sb = create_client(SB_URL, SB_KEY)
-
-# --------------------------------------------------
-# App config
-# --------------------------------------------------
-st.set_page_config(page_title="LastWarHeros v2", page_icon="🛡️", layout="wide")
-
-# --------------------------------------------------
-# Supabase client
-# --------------------------------------------------
 @st.cache_resource(show_spinner=False)
-def get_supabase() -> Client:
+def get_supabase():
     url = None
     key = None
-    try:
-        if "supabase" in st.secrets:
-            sec = st.secrets["supabase"]
-            url = sec.get("url")
-            key = sec.get("anon_key")
-    except Exception:
-        pass
-    url = url or os.environ.get("SUPABASE_URL")
-    key = key or os.environ.get("SUPABASE_ANON_KEY")
+
+    # 1) Streamlit Cloud secrets (flat keys)
+    url = st.secrets.get("supabase_url")
+    key = st.secrets.get("supabase_key")
+
+    # 2) .streamlit/secrets.toml nested style: [supabase] url/anon_key
     if not url or not key:
-        st.error("Missing Supabase credentials. Add to .streamlit/secrets.toml or set SUPABASE_URL / SUPABASE_ANON_KEY.")
+        sec = st.secrets.get("supabase", {})
+        url = url or sec.get("url")
+        key = key or sec.get("anon_key")
+
+    # 3) Environment variables (local dev fallback)
+    if not url or not key:
+        url = url or os.environ.get("SUPABASE_URL")
+        key = key or os.environ.get("SUPABASE_ANON_KEY")
+
+    if not url or not key:
+        st.error("Supabase credentials are missing. Add them to Streamlit Cloud Secrets "
+                 "(supabase_url, supabase_key) or .streamlit/secrets.toml, "
+                 "or set SUPABASE_URL / SUPABASE_ANON_KEY.")
         st.stop()
+
     return create_client(url, key)
 
-sb: Client = get_supabase()
+sb = get_supabase()
 
-# Connection banner
+# Optional: light connection check
 try:
     sb.table("buildings_kv").select("key").limit(1).execute()
 except Exception:
     st.warning("⚠️ Supabase connection failed. Check URL and key.")
-
 
 # --------------------------------------------------
 # Data model: Buildings (KV) — keep user's order
