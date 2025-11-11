@@ -4,6 +4,7 @@
 import os
 import streamlit as st
 from supabase import create_client  # no need to import Client if you don't annotate
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 @st.cache_resource(show_spinner=False)
 def get_supabase():
