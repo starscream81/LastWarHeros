@@ -1,34 +1,28 @@
 from __future__ import annotations
 
-# LastWarHeros — Streamlit app with Supabase auth, per-user RLS, autosave,
+# LastWarHeros — Streamlit app with Supabase auth (per-session), per-user RLS,
 # profile (name + avatar upload), and per-user research/hero power.
-#
-# Required tables (all with user_id uuid + RLS):
-#   profiles(user_id PK, display_name text, avatar_url text, updated_at)
-#   buildings_kv(user_id, key, value, updated_at)  unique (user_id, key)
-#   buildings_tracking(user_id, name, upgrading bool, next bool) unique (user_id, name)
-#   research_tracking(user_id, category, name, tracked bool, priority bool) unique (user_id,category,name)
-#   research_data(user_id, category, name, level int, max_level int, order_index int, id uuid default gen_random_uuid(), updated_at)
-#   heroes(user_id, id uuid, name, power numeric, ..., updated_at)  (falls back if user_id missing)
-#
-# Storage:
-#   Create a public bucket named "avatars" (or make it public via policies).
 
 import os
 import time
+import json
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 from supabase import Client, create_client
 
-# -----------------------------
-# Supabase client
-# -----------------------------
-@st.cache_resource(show_spinner=False)
-def get_supabase() -> Client:
+# ---------------------------------------------------------------------
+# Page config
+# ---------------------------------------------------------------------
+st.set_page_config(page_title="LastWarHeros", layout="wide")
+
+# ---------------------------------------------------------------------
+# Per-session Supabase client (fixes auth leakage between users)
+# ---------------------------------------------------------------------
+def _load_supabase_creds() -> Tuple[str, str]:
     url = st.secrets.get("supabase_url") or st.secrets.get("SUPABASE_URL")
     key = st.secrets.get("supabase_key") or st.secrets.get("SUPABASE_ANON_KEY")
     if not url or not key:
@@ -40,29 +34,152 @@ def get_supabase() -> Client:
     if not url or not key:
         st.error("Missing SUPABASE_URL / SUPABASE_ANON_KEY.")
         st.stop()
-    return create_client(url, key)
+    return url, key
 
-sb: Client = get_supabase()
+def get_sb() -> Client:
+    """Return a Supabase client isolated to this Streamlit session."""
+    if "sb_client" not in st.session_state:
+        url, key = _load_supabase_creds()
+        st.session_state["sb_client"] = create_client(url, key)
+    return st.session_state["sb_client"]
 
-# -----------------------------
-# Auto-seed research for first-time users
-# -----------------------------
+def reset_auth_session():
+    sb = st.session_state.get("sb_client")
+    if sb:
+        try:
+            sb.auth.sign_out()
+        except Exception:
+            pass
+    for k in ("sb_client", "user_id", "auth_user", "_sb_tokens"):
+        st.session_state.pop(k, None)
+
+# ---------------------------------------------------------------------
+# Constants / config
+# ---------------------------------------------------------------------
+ID_COL = "user_id"
+
+base_buildings = [
+    "HQ", "Wall",
+    "Tech Center 1-3",
+    "Barracks 1-4",
+    "Drill Ground 1-4",
+    "Hospital 1-4", "Emergency Center",
+    "Tank Center", "Air Center", "Missile Center",   # fixed "Aircraft" -> "Air"
+    "Alert Tower", "Recon Plane 1-3",
+    "Coin Vault", "Food Warehouse", "Iron Warehouse",
+    "Gold Mine 1-5", "Iron Mine 1-5", "Farmland 1-5", "Oil Well 1-5",
+    "Smelter 1-5", "Training Base 1-5", "Material Workshop 1-5",
+    "Alliance Center", "Builder's Hut", "Tavern", "Technical Institute",
+    "Drone Parts Workshop", "Chip Lab", "Component Factory", "Gear Factory",
+]
+
+ALIASES = {
+    "oil wall": "Oil Well",
+    "coil vault": "Coin Vault",
+    "farm warehouse": "Food Warehouse",
+    "tactical institute": "Technical Institute",
+    "training grounds": "Drill Ground",
+}
+
+def expand_ranges_in_order(names: List[str]) -> List[str]:
+    out: List[str] = []
+    for n in names:
+        parts = n.rsplit(" ", 1)
+        if len(parts) == 2 and "-" in parts[1]:
+            head, rng = parts[0], parts[1]
+            try:
+                lo, hi = [int(x) for x in rng.split("-")]
+                out += [f"{head} {i}" for i in range(lo, hi + 1)]
+            except Exception:
+                out.append(n)
+        else:
+            out.append(n)
+    return out
+
+DEFAULT_BUILDINGS = expand_ranges_in_order(base_buildings)
+
+SERIES = {
+    "Tech Center": list(range(1, 4)),
+    "Barracks": list(range(1, 5)),
+    "Hospital": list(range(1, 5)),
+    "Drill Ground": list(range(1, 5)),
+    "Recon Plane": list(range(1, 4)),
+    "Gold Mine": list(range(1, 6)),
+    "Iron Mine": list(range(1, 6)),
+    "Farmland": list(range(1, 6)),
+    "Oil Well": list(range(1, 6)),
+    "Smelter": list(range(1, 6)),
+    "Training Base": list(range(1, 6)),
+    "Material Workshop": list(range(1, 6)),
+}
+CENTER_NAMES = ["Tank Center", "Air Center", "Missile Center"]  # fixed
+
+RESEARCH_CATEGORIES = [
+    "Development", "Economy", "Hero", "Units",
+    "Squad 1", "Squad 2", "Squad 3", "Squad 4",
+    "Alliance Duel", "Intercity Truck", "Special Forces", "Siege to Seize",
+    "Defense Fortifications", "Tank Mastery", "Missile Mastery", "Air Mastery",
+    "The Age of Oil", "Tactical Weapon",
+]
+
+# ---------------------------------------------------------------------
+# UI helpers
+# ---------------------------------------------------------------------
+def pct_chip(pct: float, label: str = "") -> str:
+    p = max(0, min(100, int(round(pct))))
+    return (
+        f"<div style='display:inline-block;padding:6px 10px;border-radius:12px;"
+        f"margin-bottom:10px;background:linear-gradient(90deg, rgba(255,120,120,1) 0%,"
+        f" rgba(120,200,120,1) {p}%, rgba(235,235,235,1) {p}%);"
+        f"color:black;font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,0.08);'>"
+        f"{label}{p}%</div>"
+    )
+
+# ---------------------------------------------------------------------
+# RPC + bootstrap
+# ---------------------------------------------------------------------
 def seed_user_research_for_user(user_id: str) -> None:
+    sb = get_sb()
     try:
         sb.rpc("seed_user_research", {"p_user_id": user_id}).execute()
     except Exception as e:
-        # Non-fatal: keeps app running even if RPC not present yet
+        # Non-fatal
         st.warning(f"Seeding user_research failed: {e}")
 
-# -----------------------------
+def bootstrap_user_if_needed(uid: str):
+    sb = get_sb()
+    # 1) buildings_kv zeros
+    try:
+        res = sb.table("buildings_kv").select("key", count="exact").eq(ID_COL, uid).limit(1).execute()
+        has_any = bool((getattr(res, "count", None) or 0) > 0 or (res.data or []))
+        if not has_any:
+            seed = [{"key": k, "value": "0", ID_COL: uid} for k in DEFAULT_BUILDINGS]
+            sb.table("buildings_kv").upsert(seed, on_conflict=f"{ID_COL},key").execute()
+    except Exception:
+        pass
+
+    # 2) research_data seed rows (so chips don’t break)
+    try:
+        res = sb.table("research_data").select("id", count="exact").eq(ID_COL, uid).limit(1).execute()
+        has_any = bool((getattr(res, "count", None) or 0) > 0 or (res.data or []))
+        if not has_any:
+            seed = []
+            for cat in RESEARCH_CATEGORIES:
+                seed.append({ID_COL: uid, "category": cat, "name": "_seed_", "level": 0, "max_level": 0, "order_index": 0})
+            sb.table("research_data").upsert(seed).execute()
+    except Exception:
+        pass
+
+# ---------------------------------------------------------------------
 # Auth
-# -----------------------------
+# ---------------------------------------------------------------------
 @dataclass
 class AuthResult:
     user_id: str
     email: str
 
 def _oauth_button(provider: str, label: str):
+    sb = get_sb()
     if st.button(label, use_container_width=True, key=f"oauth::{provider}"):
         try:
             redirect_to = os.getenv("OAUTH_REDIRECT") or "http://localhost:8501"
@@ -72,10 +189,10 @@ def _oauth_button(provider: str, label: str):
             st.error(f"OAuth start failed: {e}")
 
 def auth_ui() -> Optional[AuthResult]:
+    sb = get_sb()
     st.sidebar.header("Sign in")
     tabs = st.sidebar.tabs(["Password", "Email code", "Google / GitHub"])
 
-    # password
     with tabs[0]:
         with st.form("auth_pw"):
             email = st.text_input("Email")
@@ -86,7 +203,14 @@ def auth_ui() -> Optional[AuthResult]:
         if in_btn:
             try:
                 data = sb.auth.sign_in_with_password({"email": email, "password": pw})
+#               Save session tokens for this tab if present
+                if getattr(data, "session", None):
+                    st.session_state["_sb_tokens"] = {
+                        "access_token": data.session.access_token,
+                        "refresh_token": data.session.refresh_token,
+                    }
                 return AuthResult(user_id=data.user.id, email=data.user.email or "")
+
             except Exception as e:
                 st.error(f"Sign in failed: {e}")
         if up_btn:
@@ -96,7 +220,6 @@ def auth_ui() -> Optional[AuthResult]:
             except Exception as e:
                 st.error(f"Sign up failed: {e}")
 
-    # email OTP
     with tabs[1]:
         with st.form("auth_otp"):
             email = st.text_input("Email")
@@ -118,7 +241,6 @@ def auth_ui() -> Optional[AuthResult]:
                 except Exception as e:
                     st.error(f"Verification failed: {e}")
 
-    # oauth
     with tabs[2]:
         st.caption("Enable providers in Supabase first.")
         _oauth_button("google", "Continue with Google")
@@ -127,119 +249,75 @@ def auth_ui() -> Optional[AuthResult]:
     return None
 
 def get_current_user() -> Tuple[Optional[str], Optional[dict]]:
+    sb = get_sb()
     try:
         resp = sb.auth.get_user()
         if resp and resp.user:
             uid = resp.user.id
-            # NEW: auto-seed research for first-time users
+            # seed user_research on first login
             seed_user_research_for_user(uid)
             return uid, resp.user.model_dump()  # type: ignore
     except Exception:
         pass
     return None, None
 
-# -----------------------------
-# Owner helpers
-# -----------------------------
-from typing import Union
-
-def owner_upsert(table: str, payload: Union[dict, List[dict]], user_id: str):
-    # Normalize to a list of rows
-    rows = [payload] if isinstance(payload, dict) else list(payload or [])
-    # Attach user_id to every row (RLS requires it on insert)
-    for r in rows:
-        r[ID_COL] = user_id
-
-    # Pick the correct conflict target for each table
-    if table == "research_data":
-        conflict = f"{ID_COL},category,name"
-    else:
-        conflict = f"{ID_COL},name"
-
-    sb.table(table).upsert(rows, on_conflict=conflict).execute()
-
-# -----------------------------
-# Building helpers
-# -----------------------------
-HERO_TABLE = "heroes"  # actual table name in Supabase
-
-def hero_names_for_user(user_id: str):
-    rows = owner_select(HERO_TABLE, "name", user_id, order_by="name")
-    return [r["name"] for r in rows] if rows else []
-
-def hero_get(user_id: str, name: str):
-    rows = (
-        sb.from_(HERO_TABLE)
-        .select("*")
-        .eq(ID_COL, user_id)
-        .eq("name", name)
-        .limit(1)
-        .execute()
-        .data
-    )
-    return rows[0] if rows else None
-
-def hero_save(user_id: str, row: dict):
-    row = {**row, ID_COL: user_id}
-    sb.table(HERO_TABLE).upsert(row, on_conflict=f"{ID_COL},name").execute()
-
-def hero_delete(user_id: str, name: str):
-    sb.from_(HERO_TABLE).delete().eq(ID_COL, user_id).eq("name", name).execute()
-  
-# -----------------------------
-# KV helpers
-# -----------------------------
-# Column used for per user isolation
-ID_COL = "user_id"
-
+# ---------------------------------------------------------------------
+# Owner / KV helpers (RLS-safe)
+# ---------------------------------------------------------------------
 def _eq_owner(q, uid: str):
     return q.eq(ID_COL, uid)
 
 def owner_select(table: str, columns: str, user_id: str, order_by: Optional[str] = None, desc: bool = False):
-    """
-    Select rows for the current user only.
-    columns can be something like "name,upgrading,next" or "*" 
-    """
+    sb = get_sb()
     q = sb.from_(table).select(columns)
     q = _eq_owner(q, user_id)
     if order_by:
         q = q.order(order_by, desc=desc)
     return q.execute().data
 
-def kv_select(table: str, uid: str, keys: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+def owner_upsert(table: str, payload: Union[dict, List[dict]], user_id: str):
+    sb = get_sb()
+    rows = [payload] if isinstance(payload, dict) else list(payload or [])
+    for r in rows:
+        r[ID_COL] = user_id
+    conflict = f"{ID_COL},category,name" if table == "research_data" else f"{ID_COL},name"
+    sb.table(table).upsert(rows, on_conflict=conflict).execute()
+
+def kv_select(table: str, uid: str, keys: Optional[Union[str, List[str]]] = None) -> List[Dict[str, Any]]:
+    sb = get_sb()
     q = sb.table(table).select("key,value,updated_at")
     q = _eq_owner(q, uid)
     if keys:
-        q = q.in_("key", keys)
+        if isinstance(keys, list):
+            q = q.in_("key", keys)
+        else:
+            q = q.in_("key", [keys])
     try:
         return q.execute().data or []
     except Exception:
-        # legacy no user_id
+        # legacy fallback without user_id column
         q = sb.table(table).select("key,value,updated_at")
         if keys:
-            q = q.in_("key", keys)
+            if isinstance(keys, list):
+                q = q.in_("key", keys)
+            else:
+                q = q.in_("key", [keys])
         return q.execute().data or []
 
-from typing import Union, List
-
-ID_COL = "user_id"  # if not already defined above
-
 def kv_upsert(table: str, uid: str, payload: Union[dict, List[dict]]):
+    sb = get_sb()
     rows = [payload] if isinstance(payload, dict) else list(payload or [])
     for r in rows:
         r[ID_COL] = uid
-    # composite conflict per user+key
     sb.table(table).upsert(rows, on_conflict=f"{ID_COL},key").execute()
 
 def load_kv_map(table: str, uid: str) -> Dict[str, str]:
     rows = kv_select(table, uid, None)
     return {r.get("key"): r.get("value") for r in (rows or [])}
-    
-import json
 
 def kv_get_json(uid: str, key: str, default):
     try:
-        rows = kv_select("buildings_kv", uid, key)  # uses your _eq_owner
+        rows = kv_select("buildings_kv", uid, key)
         if rows and rows[0].get("value"):
             return json.loads(rows[0]["value"])
     except Exception:
@@ -248,94 +326,12 @@ def kv_get_json(uid: str, key: str, default):
 
 def kv_set_json(uid: str, key: str, obj):
     kv_upsert("buildings_kv", uid, [{"key": key, "value": json.dumps(obj)}])
-    
 
-# -----------------------------
-# Data constants
-# -----------------------------
-base_buildings = [
-    "HQ", "Wall",
-    "Tech Center 1-3",
-    "Barracks 1-4",
-    "Drill Ground 1-4",
-    "Hospital 1-4", "Emergency Center",
-    "Tank Center", "Aircraft Center", "Missile Center",
-    "Alert Tower", "Recon Plane 1-3",
-    "Coin Vault", "Food Warehouse", "Iron Warehouse",
-    "Gold Mine 1-5", "Iron Mine 1-5", "Farmland 1-5", "Oil Well 1-5",
-    "Smelter 1-5", "Training Base 1-5", "Material Workshop 1-5",
-    "Alliance Center", "Builder's Hut", "Tavern", "Technical Institute",
-    "Drone Parts Workshop", "Chip Lab", "Component Factory", "Gear Factory",
-]
-
-def expand_ranges_in_order(names: List[str]) -> List[str]:
-    out: List[str] = []
-    for n in names:
-        parts = n.rsplit(" ", 1)
-        if len(parts) == 2 and "-" in parts[1]:
-            head, rng = parts[0], parts[1]
-            try:
-                lo, hi = [int(x) for x in rng.split("-")]
-                out += [f"{head} {i}" for i in range(lo, hi + 1)]
-            except Exception:
-                out.append(n)
-        else:
-            out.append(n)
-    return out
-
-DEFAULT_BUILDINGS = expand_ranges_in_order(base_buildings)
-
-ALIASES = {
-    "oil wall": "Oil Well",
-    "coil vault": "Coin Vault",
-    "farm warehouse": "Food Warehouse",
-    "tactical institute": "Technical Institute",
-    "training grounds": "Drill Ground",
-}
-
-SERIES = {
-    "Tech Center": list(range(1, 4)),
-    "Barracks": list(range(1, 5)),
-    "Hospital": list(range(1, 5)),
-    "Drill Ground": list(range(1, 5)),
-    "Recon Plane": list(range(1, 4)),
-    "Gold Mine": list(range(1, 6)),
-    "Iron Mine": list(range(1, 6)),
-    "Farmland": list(range(1, 6)),
-    "Oil Well": list(range(1, 6)),
-    "Smelter": list(range(1, 6)),
-    "Training Base": list(range(1, 6)),
-    "Material Workshop": list(range(1, 6)),
-}
-CENTER_NAMES = ["Tank Center", "Aircraft Center", "Missile Center"]
-
-RESEARCH_CATEGORIES = [
-    "Development", "Economy", "Hero", "Units",
-    "Squad 1", "Squad 2", "Squad 3", "Squad 4",
-    "Alliance Duel", "Intercity Truck", "Special Forces", "Siege to Seize",
-    "Defense Fortifications", "Tank Mastery", "Missile Mastery", "Air Mastery",
-    "The Age of Oil", "Tactical Weapon",
-]
-
-# -----------------------------
-# Utility for chips
-# -----------------------------
-def pct_chip(pct: float, label: str = "") -> str:
-    p = max(0, min(100, int(round(pct))))
-    return (
-        f"<div style='display:inline-block;padding:6px 10px;border-radius:12px;"
-        f"margin-bottom:10px;background:linear-gradient(90deg, rgba(255,120,120,1) 0%,"
-        f" rgba(120,200,120,1) {p}%, rgba(235,235,235,1) {p}%);"
-        f"color:black;font-weight:700;box-shadow:0 1px 4px rgba(0,0,0,0.08);'>"
-        f"{label}{p}%</div>"
-    )
-
-# -----------------------------
-# Profiles (display_name + avatar)  (REPLACE THIS WHOLE SECTION)
-# -----------------------------
+# ---------------------------------------------------------------------
+# Profile helpers
+# ---------------------------------------------------------------------
 def load_profile(uid: str) -> Dict[str, Any]:
-    """Load profile. Prefer profiles table, fallback to KV so it always sticks."""
-    # 1) try profiles table
+    sb = get_sb()
     try:
         data = (
             sb.table("profiles")
@@ -350,7 +346,7 @@ def load_profile(uid: str) -> Dict[str, Any]:
     except Exception:
         pass
 
-    # 2) fallback to KV
+    # fallback to KV
     try:
         rows = kv_select("buildings_kv", uid, ["display_name", "avatar_url"])
         kv = {r.get("key"): r.get("value") for r in rows or []}
@@ -364,21 +360,19 @@ def load_profile(uid: str) -> Dict[str, Any]:
         return {}
 
 def save_profile(uid: str, display_name: Optional[str] = None, avatar_url: Optional[str] = None) -> bool:
-    """Save profile. Try profiles table; if that fails (RLS / missing table), write to KV."""
+    sb = get_sb()
     obj = {ID_COL: uid}
     if display_name is not None:
         obj["display_name"] = display_name
     if avatar_url is not None:
         obj["avatar_url"] = avatar_url
 
-    # 1) try profiles table
     try:
         sb.table("profiles").upsert(obj, on_conflict=ID_COL).execute()
         return True
     except Exception:
         pass
 
-    # 2) fallback to KV
     try:
         kv_payload = []
         if display_name is not None:
@@ -392,30 +386,16 @@ def save_profile(uid: str, display_name: Optional[str] = None, avatar_url: Optio
         return False
 
 def upload_avatar(uid: str, file) -> Optional[str]:
-    """
-    Uploads an avatar to the 'avatars' bucket (public) with upsert.
-    NOTE: Supabase python client wants x-upsert as *string*, not bool.
-    """
+    sb = get_sb()
     import mimetypes
-
     try:
-        # extension + mime
         ext = os.path.splitext(file.name)[1].lower()
         if ext not in [".png", ".jpg", ".jpeg", ".webp"]:
             ext = ".png"
         mime = mimetypes.guess_type(file.name)[0] or ("image/png" if ext == ".png" else "application/octet-stream")
-
-        # path and bytes
         path = f"{uid}/avatar_{int(time.time())}{ext}"
-        data = file.read()  # bytes
-
-        # IMPORTANT: upsert must be a *string* ("true"), not boolean True
-        options = {
-            "contentType": mime,
-            "cacheControl": "3600",
-            "upsert": "true",   # <- this is the key fix
-        }
-
+        data = file.read()
+        options = {"contentType": mime, "cacheControl": "3600", "upsert": "true"}
         sb.storage.from_("avatars").upload(path, data, options)
         url = sb.storage.from_("avatars").get_public_url(path)
         return url
@@ -423,29 +403,11 @@ def upload_avatar(uid: str, file) -> Optional[str]:
         st.warning(f"Avatar upload failed: {e}")
         return None
 
-# -----------------------------
-# Research helpers (owner-aware)
-# -----------------------------
-def research_rows_for_user(fields: str, uid: str):
-    return owner_select("research_data", fields, uid)
-
-def research_save_rows(uid: str, rows: List[dict]):
-    owner_upsert("research_data", rows, uid)
-
-def research_completion(df: pd.DataFrame) -> float:
-    if df is None or df.empty:
-        return 0.0
-    levels = pd.to_numeric(df.get("level"), errors="coerce").fillna(0)
-    maxes = pd.to_numeric(df.get("max_level"), errors="coerce").fillna(0)
-    valid = maxes > 0
-    if not valid.any():
-        return 0.0
-    clamped = np.minimum(levels[valid], maxes[valid])
-    frac = (clamped / maxes[valid]).fillna(0)
-    return float(round(frac.mean() * 100, 1))
-
+# ---------------------------------------------------------------------
+# Research helpers
+# ---------------------------------------------------------------------
 def load_research_for_user(uid: str) -> pd.DataFrame:
-    """Left-join research_catalog with this user's progress."""
+    sb = get_sb()
     try:
         catalog = sb.table("research_catalog").select("name,category,max_level,order_index").execute().data or []
     except Exception:
@@ -471,164 +433,135 @@ def load_research_for_user(uid: str) -> pd.DataFrame:
     df["level"] = pd.to_numeric(df["level"], errors="coerce").fillna(0).astype(int)
     df["tracked"] = df["tracked"].fillna(False).astype(bool)
     df["priority"] = df["priority"].fillna(False).astype(bool)
+    df["order_index"] = pd.to_numeric(df.get("order_index"), errors="coerce").fillna(0).astype(int)
     return df
 
-# -----------------------------
-# Bootstrap for new users
-# -----------------------------
-def bootstrap_user_if_needed(uid: str):
-    # 1) buildings_kv zeros
+# ---------------------------------------------------------------------
+# Restore saved session tokens for this browser tab
+# ---------------------------------------------------------------------
+sb = get_sb()
+_tokens = st.session_state.get("_sb_tokens")
+if _tokens:
     try:
-        res = sb.table("buildings_kv").select("key", count="exact").eq(ID_COL, uid).limit(1).execute()
-        has_any = bool((getattr(res, "count", None) or 0) > 0 or (res.data or []))
-        if not has_any:
-            seed = [{"key": k, "value": "0"} for k in DEFAULT_BUILDINGS]
-            kv_upsert("buildings_kv", uid, seed)
+        sb.auth.set_session(_tokens["access_token"], _tokens["refresh_token"])
     except Exception:
-        pass
+        # If refresh token is expired or invalid, remove it
+        st.session_state.pop("_sb_tokens", None)
 
-    # 2) research_data seed rows so chips don’t break
-    try:
-        res = sb.table("research_data").select("id", count="exact").eq(ID_COL, uid).limit(1).execute()
-        has_any = bool((getattr(res, "count", None) or 0) > 0 or (res.data or []))
-        if not has_any:
-            seed = []
-            # one seed row per category at 0/0 (you’ll add proper rows as you go)
-            for cat in RESEARCH_CATEGORIES:
-                seed.append({ID_COL: uid, "category": cat, "name": "_seed_", "level": 0, "max_level": 0, "order_index": 0})
-            sb.table("research_data").upsert(seed).execute()
-    except Exception:
-        pass
+# ---------------------------------------------------------------------
+# AUTH GATE — ensure user_id is session-scoped
+# ---------------------------------------------------------------------
+user_id: Optional[str] = st.session_state.get("user_id")
+auth_user = st.session_state.get("auth_user")
 
-# -----------------------------
-# Streamlit app
-# -----------------------------
-st.set_page_config(page_title="LastWarHeros", layout="wide")
+if not user_id:
+    uid, user = get_current_user()
+    if uid:
+        st.session_state["user_id"] = uid
+        st.session_state["auth_user"] = user
+        user_id, auth_user = uid, user
+    else:
+        ar = auth_ui()
+        if not ar:
+            st.stop()
+        st.session_state["user_id"] = ar.user_id
+        st.session_state["auth_user"] = {"email": ar.email}
+        user_id = ar.user_id
+        auth_user = st.session_state["auth_user"]
+
+# ---------------------------------------------------------------------
+# SIDEBAR (single source of truth; unique keys per session)
+# ---------------------------------------------------------------------
+_sb_prefix = f"sb_{str(user_id)[:8]}_"
 with st.sidebar:
     st.title("LastWarHeros")
 
-user_id, _ = get_current_user()
-if not user_id:
-    auth = auth_ui()
-    if not auth:
-        st.stop()
-    user_id = auth.user_id
-
-# =====================================================================
-# AUTH CHECK (make sure user_id is set above this)
-# =====================================================================
-# Expect: user_id is already defined and valid here.
-
-# =====================================================================
-# SIDEBAR (single source of truth)
-# =====================================================================
-# Use a per-session prefix so keys never collide after hot-reload
-_sb_prefix = f"sb_{str(user_id)[:8]}_"
-
-# Sign out
-if st.sidebar.button("Sign out", key=_sb_prefix + "signout"):
-    try:
-        sb.auth.sign_out()
-    finally:
+    if st.button("Sign out", key=_sb_prefix + "signout"):
+        reset_auth_session()
         st.rerun()
 
-# Who is signed in
-st.sidebar.caption(f"Signed in as: {user_id}")
+    st.caption(f"Signed in as: {user_id}")
 
-# Ensure safe defaults for new users (only call once)
-bootstrap_user_if_needed(user_id)
+    # Ensure safe defaults for new users
+    bootstrap_user_if_needed(user_id)
 
-# Navigation
-PAGES = [
-    "Dashboard",
-    "Buildings",
-    "Heroes",
-    "Add or Update Hero",
-    "Research",
-    "Update Player Name",
-    "Update Profile Picture",
-]
-page = st.sidebar.radio("Navigate", PAGES, index=0, key=_sb_prefix + "nav")
+    PAGES = [
+        "Dashboard",
+        "Buildings",
+        "Heroes",
+        "Add or Update Hero",
+        "Research",
+        "Update Player Name",
+        "Update Profile Picture",
+    ]
+    page = st.radio("Navigate", PAGES, index=0, key=_sb_prefix + "nav")
 
-# Buy Me a Beer
-# ---------------------------------------------------------------------
-# Buy Me a Beer button (with cleaner spacing)
-# ---------------------------------------------------------------------
-st.sidebar.markdown(
-    """
-    <hr style='margin-top: 1.5em; margin-bottom: 1em; border: 1px solid #333;'/>
-    <style>
-      .beer-button {
-        background-color: #f5c518;
-        color: black;
-        border: none;
-        padding: 10px 24px;
-        border-radius: 8px;
-        font-size: 16px;
-        font-weight: 600;
-        cursor: pointer;
-        transition: background-color 0.3s ease;
-        text-decoration: none;
-        display: inline-block;
-        margin-top: 0.5em;
-        margin-bottom: 0.5em;
-      }
-      .beer-button:hover {
-        background-color: #ffd84d;
-      }
-      .beer-container {
-        text-align: center;
-        margin-top: 0.5em;
-        margin-bottom: 1.5em;
-      }
-    </style>
-    <div class='beer-container'>
-      <a class='beer-button' href='https://paypal.me/KMahana' target='_blank'>
-        🍺 Buy Me a Beer
-      </a>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-# Privacy (collapsible)
-with st.sidebar.expander("🔒 Privacy Policy", expanded=False):
     st.markdown(
         """
-        **Complete Privacy Policy for LastWarHeros**
-
-        **1. Introduction and Data Controller**  
-        This Privacy Policy explains how Kevin Mahana ("we," "us," or "our") processes the personal data of users of the LastWarHeros application ("the Service").  
-        We are committed to protecting your privacy in compliance with the EU's General Data Protection Regulation (GDPR) and relevant local laws.  
-
-        **Data Controller:** Kevin Mahana, Germany  
-        **Contact:** [lastwarheros.underfeed182@passmail.com](mailto:lastwarheros.underfeed182@passmail.com)  
-
-        **2. Data We Collect and Purpose**  
-        - **Email Address:** To create and manage your account.  
-        - **Game Data:** Building levels, Hero stats, and Research progress that you voluntarily enter.  
-
-        **3. Legal Basis & Storage**  
-        - *Contractual necessity:* We process your email to operate your account.  
-        - *Storage:* Supabase (AWS eu-west-1, Ireland).  
-        - *Sharing:* We do **not** share your data with third parties.  
-
-        **4. Retention**  
-        Data is retained only while your account is active and is deleted when your account is removed.  
-
-        **5. Your Rights (EU/UK Users)**  
-        You may request access, correction, deletion, or portability of your data by emailing the contact above.  
-        You may also lodge a complaint with your national data protection authority.
+        <hr style='margin-top: 1.5em; margin-bottom: 1em; border: 1px solid #333;'/>
+        <style>
+          .beer-button {
+            background-color: #f5c518;
+            color: black;
+            border: none;
+            padding: 10px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+            margin-top: 0.5em;
+            margin-bottom: 0.5em;
+          }
+          .beer-button:hover { background-color: #ffd84d; }
+          .beer-container { text-align: center; margin-top: 0.5em; margin-bottom: 1.5em; }
+        </style>
+        <div class='beer-container'>
+          <a class='beer-button' href='https://paypal.me/KMahana' target='_blank'>
+            🍺 Buy Me a Beer
+          </a>
+        </div>
         """,
         unsafe_allow_html=True,
     )
 
+    with st.expander("🔒 Privacy Policy", expanded=False):
+        st.markdown(
+            """
+            **Complete Privacy Policy for LastWarHeros**
 
-# -----------------------------
+            **1. Introduction and Data Controller**  
+            This Privacy Policy explains how Kevin Mahana ("we," "us," or "our") processes the personal data of users of the LastWarHeros application ("the Service").  
+            We are committed to protecting your privacy in compliance with the EU's General Data Protection Regulation (GDPR) and relevant local laws.  
+
+            **Data Controller:** Kevin Mahana, Germany  
+            **Contact:** [lastwarheros.underfeed182@passmail.com](mailto:lastwarheros.underfeed182@passmail.com)  
+
+            **2. Data We Collect and Purpose**  
+            - **Email Address:** To create and manage your account.  
+            - **Game Data:** Building levels, Hero stats, and Research progress that you voluntarily enter.  
+
+            **3. Legal Basis & Storage**  
+            - *Contractual necessity:* We process your email to operate your account.  
+            - *Storage:* Supabase (AWS eu-west-1, Ireland).  
+            - *Sharing:* We do **not** share your data with third parties.  
+
+            **4. Retention**  
+            Data is retained only while your account is active and is deleted when your account is removed.  
+
+            **5. Your Rights (EU/UK Users)**  
+            You may request access, correction, deletion, or portability of your data by emailing the contact above.  
+            You may also lodge a complaint with your national data protection authority.
+            """,
+            unsafe_allow_html=True,
+        )
+
+# ---------------------------------------------------------------------
 # DASHBOARD
-# -----------------------------
+# ---------------------------------------------------------------------
 if page == "Dashboard":
-    # --- Profile display only (editing moved to separate pages) ---
     prof = load_profile(user_id)
     left, right = st.columns([1, 3])
 
@@ -642,8 +575,8 @@ if page == "Dashboard":
             except Exception:
                 st.write("🐸")
 
-    # Levels map + HQ
     kv_map_full = load_kv_map("buildings_kv", user_id)
+
     def get_level(name: str) -> int:
         v = kv_map_full.get(ALIASES.get(name.lower(), name))
         if v is None:
@@ -652,16 +585,15 @@ if page == "Dashboard":
             return int(float(v))
         except Exception:
             return 0
+
     hq = get_level("HQ")
 
-    # Per-user total hero power (no fallback to shared)
-    rows = []
+    # total hero power (per user)
     try:
         rows = owner_select("heroes", "power", user_id)
     except Exception:
-        pass
-    arr = pd.to_numeric(pd.DataFrame(rows).get("power") if rows else pd.Series([], dtype="float64"),
-                        errors="coerce").fillna(0)
+        rows = []
+    arr = pd.to_numeric(pd.DataFrame(rows).get("power") if rows else pd.Series([], dtype="float64"), errors="coerce").fillna(0)
     total_power = int(arr.sum())
 
     with right:
@@ -689,7 +621,7 @@ if page == "Dashboard":
     st.divider()
     col_teams, col_build, col_research = st.columns([1, 1, 1], gap="large")
 
-    # Teams (three slots; autosave to buildings_kv)
+    # ---- Teams ----
     with col_teams:
         st.subheader("Teams")
         team_opts = ["Tank", "Air", "Missile", "Mixed"]
@@ -726,7 +658,7 @@ if page == "Dashboard":
             with pc:
                 st.text_input("Power", key=pkey, placeholder="43.28M", on_change=_save_power)
 
-    # Buildings (what’s cookin / on deck)
+    # ---- Buildings ----
     with col_build:
         st.subheader("Buildings")
         st.caption("What’s Cookin’")
@@ -746,39 +678,33 @@ if page == "Dashboard":
         else:
             st.markdown("🧱 _Nothing on deck_")
 
-    # ----- Dashboard: Research -----
+    # ---- Research ----
     with col_research:
         st.subheader("Research")
+        df_r = load_research_for_user(user_id)
 
-        df = load_research_for_user(user_id)
-
-        # 🔥 What's Cookin
         st.caption("What’s Cookin’")
-        hot = df[df["tracked"]]
+        hot = df_r[df_r["tracked"]] if not df_r.empty else pd.DataFrame([])
         if not hot.empty:
             for cat in sorted(hot["category"].unique()):
-                items = hot[hot["category"] == cat].sort_values(["order_index","name"])
+                items = hot[hot["category"] == cat].sort_values(["order_index", "name"])
                 labels = [f"{r['name']} ({int(r['level'])} → {int(r['level'])+1})" for _, r in items.iterrows()]
                 st.markdown(f"🔥 **{cat}** — " + " · ".join(labels))
         else:
             st.markdown("🔥 _Nothing in progress_")
 
-        # ⭐ On Deck
         st.caption("On Deck")
-        star = df[df["priority"]]
+        star = df_r[df_r["priority"]] if not df_r.empty else pd.DataFrame([])
         if not star.empty:
             for cat in sorted(star["category"].unique()):
-                items = star[star["category"] == cat].sort_values(["order_index","name"])
+                items = star[star["category"] == cat].sort_values(["order_index", "name"])
                 st.markdown(f"⭐ **{cat}** — " + " · ".join(items["name"].tolist()))
         else:
             st.markdown("⭐ _Nothing on deck_")
 
-    # -----------------------------
-    # Highest Building Level
-    # -----------------------------
+    # ---- Highest Building Level ----
     st.subheader("Highest Building Level")
 
-    # Pull all KV for this user once
     try:
         kv_rows = kv_select("buildings_kv", user_id, None) or []
     except Exception:
@@ -792,7 +718,6 @@ if page == "Dashboard":
             return 0
 
     def _by_prefix(prefix: str) -> list[str]:
-        """All keys that start with 'prefix' or equal to it (e.g., 'Drill Ground 1', 'Drill Ground 2', ...)."""
         pref = prefix.strip()
         res = []
         for k in lvl_map.keys():
@@ -804,31 +729,23 @@ if page == "Dashboard":
         return sorted(res)
 
     def _max_level(names: list[str]) -> tuple[int, str]:
-        """Return (max_level, breakdown) where breakdown is 'n:lv, n:lv, ...'."""
         if not names:
             return 0, ""
         pairs = [(n, _to_int(lvl_map.get(n, 0))) for n in names]
         mx = max(lv for _, lv in pairs) if pairs else 0
-        # compact breakdown like '1:32, 2:30, 3:28' using trailing token as index where possible
-        detail = ", ".join(
-            f"{(n.split()[-1] if n.split()[-1].isdigit() else n)}:{lv}" for n, lv in pairs
-        )
+        detail = ", ".join(f"{(n.split()[-1] if n.split()[-1].isdigit() else n)}:{lv}" for n, lv in pairs)
         return mx, detail
 
-    # Explicit groups
     tech_center_names = ["Tech Center 1", "Tech Center 2", "Tech Center 3"]
-    tam_center_names = ["Tank Center", "Aircraft Center", "Missile Center"]
+    tam_center_names = ["Tank Center", "Air Center", "Missile Center"]  # fixed
 
-    # Dynamic groups (any count): Drill Ground, Barracks, Hospital
     drill_names = _by_prefix("Drill Ground")
     barracks_names = _by_prefix("Barracks")
     hospital_names = _by_prefix("Hospital")
 
-    # Singles: Wall, Alliance Center
     wall_names = ["Wall"]
     alliance_center_names = ["Alliance Center"]
 
-    # Compute metrics
     tech_max, tech_detail = _max_level(tech_center_names)
     wall_max, wall_detail = _max_level(wall_names)
     drill_max, drill_detail = _max_level(drill_names)
@@ -839,7 +756,6 @@ if page == "Dashboard":
 
     tam_max, tam_detail = _max_level(tam_center_names)
 
-    # Row 1: Tech Center | Wall | Drill Ground
     row = st.columns(3)
     with row[0]:
         st.metric("Tech Center", tech_max, help=(tech_detail or "No entries yet"))
@@ -848,7 +764,6 @@ if page == "Dashboard":
     with row[2]:
         st.metric("Drill Ground", drill_max, help=(drill_detail or "No entries yet"))
 
-    # Row 2: Barracks | Hospital | Alliance Center
     row = st.columns(3)
     with row[0]:
         st.metric("Barracks", barracks_max, help=(barracks_detail or "No entries yet"))
@@ -857,11 +772,9 @@ if page == "Dashboard":
     with row[2]:
         st.metric("Alliance Center", ac_max, help=(ac_detail or "No entry yet"))
 
-    # Row 3: Tank/Air/Missile Center (full width)
     st.metric("Tank/Air/Missile Center", tam_max, help=(tam_detail or "No entries yet"))
 
-
-    # ----- Building Progress (chips) -----
+    # ---- Building Progress (chips) ----
     st.divider()
     st.subheader("Building Progress")
 
@@ -886,14 +799,16 @@ if page == "Dashboard":
         return s
 
     def pct_of_hq_sum(base: str, series_key: str) -> float:
-        if hq <= 0: return 0.0
+        if hq <= 0:
+            return 0.0
         rng = SERIES[series_key]
         total = sum_series_local(base, rng)
         denom = len(rng) * hq
         return (total / denom) * 100.0 if denom > 0 else 0.0
 
     def pct_of_hq_single(name: str) -> float:
-        if hq <= 0: return 0.0
+        if hq <= 0:
+            return 0.0
         return (get_level(name) / hq) * 100.0
 
     groups = [
@@ -924,25 +839,24 @@ if page == "Dashboard":
             st.markdown(f"**{label}**")
             st.markdown(pct_chip(fn()), unsafe_allow_html=True)
 
-    # Research chips under Building Progress
+    # ---- Research Progress chips ----
     st.subheader("Research Progress")
-    df = load_research_for_user(user_id)
-    if df.empty:
+    df_r2 = load_research_for_user(user_id)
+    if df_r2.empty:
         st.caption("Overview (no research data)")
     else:
-        df["max_level"] = pd.to_numeric(df["max_level"], errors="coerce").fillna(1)
-        df["pct"] = (pd.to_numeric(df["level"], errors="coerce").fillna(0) /
-                    df["max_level"].replace(0, 1)) * 100.0
-        cats = (df.groupby("category")["pct"].mean().sort_index().round(1).reset_index().values.tolist())
+        df_r2["max_level"] = pd.to_numeric(df_r2["max_level"], errors="coerce").fillna(1)
+        df_r2["pct"] = (pd.to_numeric(df_r2["level"], errors="coerce").fillna(0) / df_r2["max_level"].replace(0, 1)) * 100.0
+        cats = (df_r2.groupby("category")["pct"].mean().sort_index().round(1).reset_index().values.tolist())
         cols = st.columns(3)
         for idx, (cat, pct) in enumerate(cats):
             with cols[idx % 3]:
                 st.markdown(f"**{cat}**")
                 st.markdown(pct_chip(pct, ""), unsafe_allow_html=True)
 
-# -----------------------------
+# ---------------------------------------------------------------------
 # BUILDINGS
-# -----------------------------
+# ---------------------------------------------------------------------
 elif page == "Buildings":
     st.header("Buildings")
     st.write("Standard table. Only updates rows you actually change. No undo/redo.")
@@ -976,7 +890,7 @@ elif page == "Buildings":
         key="buildings_editor",
     )
 
-    # persist tracking
+    # persist tracking flags
     all_names = set(edited["name"]) if not edited.empty else set()
     payload = []
     for nm in all_names:
@@ -994,7 +908,8 @@ elif page == "Buildings":
             try:
                 changes = []
                 for _, r in edited.iterrows():
-                    key = str(r["name"]).strip(); lvl = int(r.get("level", 0) or 0)
+                    key = str(r["name"]).strip()
+                    lvl = int(r.get("level", 0) or 0)
                     if str(current_map.get(key, "")) != str(lvl):
                         changes.append({"key": key, "value": str(lvl)})
                 if changes:
@@ -1006,17 +921,15 @@ elif page == "Buildings":
         if st.button("Reload from Supabase", use_container_width=True):
             st.rerun()
 
-# -----------------------------
-# HEROES (per-user list)
-# -----------------------------
+# ---------------------------------------------------------------------
+# HEROES (per-user list with highlights)
+# ---------------------------------------------------------------------
 elif page == "Heroes":
-    HERO_TABLE = "heroes"  # define inside the block so it doesn't break the elif chain
     st.header("Heroes")
 
-    # Load rows for the signed-in user
     try:
         res = owner_select(
-            HERO_TABLE,
+            "heroes",
             "id,name,level,power,rail_gun,rail_gun_stars,armor,armor_stars,"
             "data_chip,data_chip_stars,radar,radar_stars,weapon,weapon_level,"
             "max_skill_level,skill1,skill2,skill3,type,role,team,updated_at",
@@ -1024,14 +937,13 @@ elif page == "Heroes":
             order_by="name"
         )
         df = pd.DataFrame(res or [])
-    except Exception as e:
+    except Exception:
         st.error("Could not load heroes (check RLS / user_id column).")
         df = pd.DataFrame([])
 
     if df.empty:
         st.info("No heroes yet. Use **Add or Update Hero** to create your first hero.")
     else:
-        # make numeric columns numeric for sorting
         num_cols = [
             "power","level","rail_gun","armor","data_chip","radar",
             "weapon_level","max_skill_level","skill1","skill2","skill3"
@@ -1043,7 +955,6 @@ elif page == "Heroes":
         if "power" in df.columns:
             df = df.sort_values("power", ascending=False, na_position="last")
 
-        # columns we want to show (raw names from DB)
         display_cols = [c for c in [
             "name","power","level","type","role","team",
             "rail_gun","rail_gun_stars","armor","armor_stars",
@@ -1051,7 +962,6 @@ elif page == "Heroes":
             "weapon","weapon_level","max_skill_level","skill1","skill2","skill3","updated_at"
         ] if c in df.columns]
 
-        # friendly labels for headers
         header_labels = {
             "name": "Hero",
             "power": "Power",
@@ -1076,11 +986,9 @@ elif page == "Heroes":
             "updated_at": "Last Update",
         }
 
-        # subset in raw, then rename for display
         df_sub = df[display_cols]
         df_display = df_sub.rename(columns=header_labels)
 
-        # --- conditional highlights (using DISPLAY labels) ---
         ORANGE = "background-color: #FFA500"
         GREEN  = "background-color: #008000"
 
@@ -1090,14 +998,12 @@ elif page == "Heroes":
             except Exception:
                 return False
 
-        # map role → which DISPLAY columns get orange
         role_orange_map = {
             "defense": {"Armor","Armor Stars","Radar","Radar Stars"},
             "attack":  {"Rail Gun","Rail Stars","Data Chip","Chip Stars"},
             "support": {"Rail Gun","Rail Stars","Radar","Radar Stars"},
         }
 
-        # star DISPLAY col → its base DISPLAY col (for green pair)
         pair_map = {
             "Rail Stars": "Rail Gun",
             "Armor Stars": "Armor",
@@ -1107,61 +1013,52 @@ elif page == "Heroes":
 
         disp_cols = list(df_display.columns)
         disp_set = set(disp_cols)
-        role_col_label = header_labels["role"]  # "Role"
+        role_col_label = header_labels["role"]
 
         def highlight_row_disp(row: pd.Series):
             styles = [""] * len(disp_cols)
 
-            role_val = str(row.get(role_col_label, "") or "").strip().lower()
+            role_val = str(row.get(role_col_label, "") or "").strip().toLower() if hasattr(str, "toLower") else str(row.get(role_col_label, "") or "").strip().lower()
             role_cols = role_orange_map.get(role_val, set()) & disp_set
 
-            # green overrides for 5 stars
             green_cols = set()
             for star_col, base_col in pair_map.items():
-                if star_col in disp_set and star_is_five(row.get(star_col)):
-                    green_cols.add(star_col)
-                    if base_col in disp_set:
-                        green_cols.add(base_col)
+                if star_col in disp_set:
+                    val = row.get(star_col)
+                    if star_is_five(val):
+                        green_cols.add(star_col)
+                        if base_col in disp_set:
+                            green_cols.add(base_col)
 
-            # apply green first
             for i, col in enumerate(disp_cols):
                 if col in green_cols:
                     styles[i] = GREEN
-
-            # then orange where not already green
             for i, col in enumerate(disp_cols):
                 if col in role_cols and col not in green_cols:
                     styles[i] = ORANGE if not styles[i] else styles[i]
-
             return styles
 
-        styled = df_display.style.apply(highlight_row_disp, axis=1)
-        styled = styled.format(precision=0, na_rep="", thousands=",")
-
+        styled = df_display.style.apply(highlight_row_disp, axis=1).format(precision=0, na_rep="", thousands=",")
         st.dataframe(styled, use_container_width=True)
 
-# -----------------------------
+# ---------------------------------------------------------------------
 # ADD / UPDATE HERO (per-user, RLS-safe)
-# -----------------------------
+# ---------------------------------------------------------------------
 elif page == "Add or Update Hero":
     st.header("Add or Update Hero")
 
-    HERO_TABLE = "heroes"  # actual table name
-
-    # 0) Helper: safe get
     def v(d, k, default=None):
         return (d.get(k) if d else default)
 
-    # 1) Load *your* heroes (per user)
+    sb = get_sb()
+
     try:
-        # Pull all fields we might prefill
         cols = "id,name,type,role,team,level,power,weapon,weapon_level,max_skill_level,skill1,skill2,skill3,rail_gun,rail_gun_stars,armor,armor_stars,data_chip,data_chip_stars,radar,radar_stars"
-        my_rows = owner_select(HERO_TABLE, cols, user_id, order_by="name")
+        my_rows = owner_select("heroes", cols, user_id, order_by="name")
     except Exception:
         my_rows = []
-    my_by_name = { (r.get("name") or "").strip(): r for r in my_rows if r.get("name") }
+    my_by_name = {(r.get("name") or "").strip(): r for r in my_rows if r.get("name")}
 
-    # 2) Load the shared hero catalog (optional, for type/role defaults)
     try:
         cat_res = sb.table("hero_catalog").select("name,type,role").order("name").execute()
         catalog_rows = cat_res.data or []
@@ -1174,32 +1071,21 @@ elif page == "Add or Update Hero":
         }
         catalog_names = sorted(catalog.keys())
     except Exception:
-        catalog = {}
-        catalog_names = []
+        catalog, catalog_names = {}, []
 
-    # 3) Build dropdown list
     names = ["<Create new>"]
     names += sorted(list({n for n in catalog_names if n}))
     names += [n for n in my_by_name.keys() if n and n not in catalog_names]
     selected = st.selectbox("Choose hero", names, index=0)
 
-    # 4) Determine current hero (if you already own one by that name)
-    current = None
-    if selected != "<Create new>":
-        current = my_by_name.get(selected)
-
-    # Use catalog defaults if not yet created by user
+    current = my_by_name.get(selected) if selected != "<Create new>" else None
     cat_defaults = catalog.get(selected, {}) if selected not in ("", "<Create new>") else {}
     default_type = (v(current, "type") or "") or cat_defaults.get("type", "")
     default_role = (v(current, "role") or "") or cat_defaults.get("role", "")
 
-    # 5) Form fields
     colA, colB, colC = st.columns(3)
     with colA:
-        name = st.text_input(
-            "Name *",
-            value=(v(current, "name") or (selected if selected != "<Create new>" else "") or "")
-        )
+        name = st.text_input("Name *", value=(v(current, "name") or (selected if selected != "<Create new>" else "") or ""))
         type_ = st.text_input("Type", value=default_type)
         role = st.text_input("Role", value=default_role)
         team = st.text_input("Team", value=(v(current, "team", "") or ""))
@@ -1245,23 +1131,16 @@ elif page == "Add or Update Hero":
         "radar": int(radar or 0), "radar_stars": (radar_stars or "").strip(),
     }
 
-    # 6) Actions
     col_save, col_delete = st.columns([1, 1])
-
     with col_save:
         if st.button("Save", use_container_width=True, type="primary"):
             try:
                 payload = dict(hero_payload)
                 payload[ID_COL] = user_id
-
-                # If user picked a catalog name but left Name blank, fill it
                 if not payload["name"] and selected not in ("", "<Create new>"):
                     payload["name"] = selected
-
-                # Use an idempotent upsert on (user_id, name)
-                sb.table(HERO_TABLE).upsert(payload, on_conflict=f"{ID_COL},name").execute()
-                st.success("Hero saved")
-                st.rerun()
+                get_sb().table("heroes").upsert(payload, on_conflict=f"{ID_COL},name").execute()
+                st.success("Hero saved"); st.rerun()
             except Exception as e:
                 st.error(f"Save failed: {e}")
 
@@ -1269,22 +1148,22 @@ elif page == "Add or Update Hero":
         if current and current.get("id"):
             if st.button("Delete", type="secondary", use_container_width=True):
                 try:
-                    # Ensure we delete only this user's row
-                    sb.table(HERO_TABLE).delete().eq("id", current["id"]).eq(ID_COL, user_id).execute()
+                    get_sb().table("heroes").delete().eq("id", current["id"]).eq(ID_COL, user_id).execute()
                     st.success("Hero deleted"); st.rerun()
                 except Exception as e:
                     st.error(f"Delete failed: {e}")
         else:
             st.caption("Select an existing hero to enable Delete.")
 
-# -----------------------------
-# RESEARCH (owner-scoped)
-# -----------------------------
-if page == "Research":
+# ---------------------------------------------------------------------
+# RESEARCH
+# ---------------------------------------------------------------------
+elif page == "Research":
     st.header("Research")
     st.caption("Click a category to expand. Edit Level, 🔥, and ⭐. Max Level edits the shared catalog.")
 
-    # Load catalog and user progress
+    sb = get_sb()
+
     try:
         cat_rows = sb.table("research_catalog").select("name,category,max_level,order_index").execute().data or []
     except Exception:
@@ -1292,12 +1171,7 @@ if page == "Research":
     cdf = pd.DataFrame(cat_rows)
 
     try:
-        ur_rows = (
-            sb.table("user_research")
-            .select("name,level,tracked,priority")
-            .eq("user_id", user_id)
-            .execute().data or []
-        )
+        ur_rows = sb.table("user_research").select("name,level,tracked,priority").eq("user_id", user_id).execute().data or []
     except Exception:
         ur_rows = []
     udf = pd.DataFrame(ur_rows)
@@ -1305,7 +1179,6 @@ if page == "Research":
     if cdf.empty:
         st.info("No research catalog found. Populate research_catalog first.")
     else:
-        # Merge and fill defaults
         df = cdf.merge(udf, on="name", how="left", suffixes=("", "_u"))
         df["level"] = pd.to_numeric(df.get("level"), errors="coerce").fillna(0).astype(int)
         df["tracked"] = df.get("tracked").fillna(False).astype(bool)
@@ -1314,56 +1187,32 @@ if page == "Research":
         df["category"] = df.get("category").fillna("Other").astype(str)
         df["order_index"] = pd.to_numeric(df.get("order_index"), errors="coerce").fillna(0).astype(int)
 
-        # Category ordering (compute now, UI to manage it is at the bottom)
         cats = sorted(df["category"].astype(str).unique())
-
         preferred_order = [
-            "Development",
-            "Economy",
-            "Hero",
-            "Units",
-            "Squad 1",
-            "Squad 2",
-            "Squad 3",
-            "Squad 4",
-            "Alliance Duel",
-            "Intercity Truck",
-            "Special Forces",
-            "Siege to Seize",
-            "Defense Fortifications",
-            "Tank Mastery",
-            "Missile Mastery",
-            "Air Mastery",
-            "The Age of Oil",
-            "Tactical Weapon",
+            "Development","Economy","Hero","Units",
+            "Squad 1","Squad 2","Squad 3","Squad 4",
+            "Alliance Duel","Intercity Truck","Special Forces","Siege to Seize",
+            "Defense Fortifications","Tank Mastery","Missile Mastery","Air Mastery",
+            "The Age of Oil","Tactical Weapon",
         ]
 
-        # Load saved order or start with preferred; append any new categories
         saved_order = kv_get_json(user_id, "research_category_order", preferred_order)
         pos_map = {cat: i for i, cat in enumerate(saved_order)}
         for cat in cats:
             if cat not in pos_map:
                 pos_map[cat] = len(pos_map)
-
-        # Final list to render now
         render_cats = sorted(cats, key=lambda c: pos_map.get(c, 10**9))
 
-        # ---- Render each category in saved order ----
         for cat in render_cats:
             sub = df[df["category"] == cat].sort_values(["order_index", "name"]).copy()
-
-            # Completion percent
             denom = sub["max_level"].replace(0, 1)
             pct = ((sub["level"].clip(lower=0) / denom).mean() * 100.0) if len(sub) else 0.0
 
-            # Count tracked and priority for chips in title
             fire_count = int(sub["tracked"].sum()) if "tracked" in sub.columns else 0
             star_count = int(sub["priority"].sum()) if "priority" in sub.columns else 0
             chips = []
-            if fire_count > 0:
-                chips.append(f"🔥 {fire_count}")
-            if star_count > 0:
-                chips.append(f"⭐ {star_count}")
+            if fire_count > 0: chips.append(f"🔥 {fire_count}")
+            if star_count > 0: chips.append(f"⭐ {star_count}")
             chips_text = "  ".join(chips)
 
             icon = "🟢" if pct >= 90 else ("🟠" if pct >= 50 else "🔴")
@@ -1372,15 +1221,12 @@ if page == "Research":
                 label = f"{label}   {chips_text}"
 
             with st.expander(label, expanded=False):
-                # Keep originals for change detection
                 orig_max_by_name = dict(zip(sub["name"], sub["max_level"]))
                 orig_lvl_by_name = dict(zip(sub["name"], sub["level"]))
                 orig_trk_by_name = dict(zip(sub["name"], sub["tracked"]))
                 orig_pri_by_name = dict(zip(sub["name"], sub["priority"]))
 
                 show_cols = ["name", "level", "max_level", "tracked", "priority"]
-                show_cols = [c for c in show_cols if c in sub.columns]
-
                 edited = st.data_editor(
                     sub[show_cols],
                     key=f"research_editor_{cat}",
@@ -1396,20 +1242,18 @@ if page == "Research":
                     hide_index=True,
                 )
 
-                csave, creload, cspacer = st.columns([1, 1, 6])
-                with csave:
+                c1, c2, c3 = st.columns([1, 1, 6])
+                with c1:
                     if st.button("Save", key=f"save_{cat}", type="primary", use_container_width=True):
                         try:
-                            # User progress changes
                             ur_payload = []
                             for _, r in edited.iterrows():
                                 nm = str(r["name"]).strip()
                                 if not nm:
                                     continue
                                 lvl = int(r.get("level", 0) or 0)
-                                trk = bool(r.get("tracked", False)) if "tracked" in r else False
-                                pri = bool(r.get("priority", False)) if "priority" in r else False
-
+                                trk = bool(r.get("tracked", False))
+                                pri = bool(r.get("priority", False))
                                 changed = (
                                     lvl != orig_lvl_by_name.get(nm, 0)
                                     or trk != orig_trk_by_name.get(nm, False)
@@ -1423,40 +1267,32 @@ if page == "Research":
                                         "tracked": trk,
                                         "priority": pri,
                                     })
-
                             if ur_payload:
                                 sb.table("user_research").upsert(ur_payload, on_conflict="user_id,name").execute()
 
-                            # Catalog max_level changes
                             cat_payload = []
                             for _, r in edited.iterrows():
                                 nm = str(r["name"]).strip()
-                                if not nm or "max_level" not in r:
+                                if not nm:
                                     continue
                                 ml = int(r.get("max_level", 0) or 0)
                                 if ml != orig_max_by_name.get(nm, ml):
-                                    cat_payload.append({
-                                        "name": nm,
-                                        "category": cat,
-                                        "max_level": ml,
-                                    })
-
+                                    cat_payload.append({"name": nm, "category": cat, "max_level": ml})
                             if cat_payload:
                                 sb.table("research_catalog").upsert(cat_payload, on_conflict="name").execute()
 
-                            st.success("Saved")
-                            st.rerun()
+                            st.success("Saved"); st.rerun()
                         except Exception as e:
                             st.error(f"Save failed: {e}")
 
-                with creload:
+                with c2:
                     if st.button("Reload", key=f"reload_{cat}", use_container_width=True):
                         st.rerun()
 
-                with cspacer:
+                with c3:
                     st.markdown(f"**Preview Completion:** {pct:.1f}%")
 
-        # ---- Ordering controls (collapsed, at the bottom) ----
+        # ordering controls at bottom
         with st.expander("Manage Research Group Order", expanded=False):
             odf = pd.DataFrame({
                 "Category": cats,
@@ -1483,8 +1319,7 @@ if page == "Research":
                             .astype(str).tolist()
                         )
                         kv_set_json(user_id, "research_category_order", new_order)
-                        st.success("Saved group order")
-                        st.rerun()
+                        st.success("Saved group order"); st.rerun()
                     except Exception as e:
                         st.error(f"Save failed: {e}")
 
@@ -1492,12 +1327,11 @@ if page == "Research":
                 if st.button("Use Recommended Order", use_container_width=True):
                     merged = preferred_order + [c for c in cats if c not in preferred_order]
                     kv_set_json(user_id, "research_category_order", merged)
-                    st.success("Applied recommended order")
-                    st.rerun()
+                    st.success("Applied recommended order"); st.rerun()
 
-# -----------------------------
+# ---------------------------------------------------------------------
 # UPDATE PLAYER NAME
-# -----------------------------
+# ---------------------------------------------------------------------
 elif page == "Update Player Name":
     st.header("Update Player Name")
     prof = load_profile(user_id)
@@ -1506,14 +1340,13 @@ elif page == "Update Player Name":
     if st.button("Save name", type="primary"):
         ok = save_profile(user_id, display_name=new_name)
         if ok:
-            st.success("Name saved.")
-            st.rerun()
+            st.success("Name saved."); st.rerun()
         else:
             st.error("Could not save your name (check RLS/policies).")
 
-# -----------------------------
+# ---------------------------------------------------------------------
 # UPDATE PROFILE PICTURE
-# -----------------------------                
+# ---------------------------------------------------------------------
 elif page == "Update Profile Picture":
     st.header("Update Profile Picture")
     prof = load_profile(user_id)
@@ -1531,14 +1364,13 @@ elif page == "Update Profile Picture":
         url = upload_avatar(user_id, up)
         if url:
             if save_profile(user_id, avatar_url=url):
-                st.success("Profile picture updated.")
-                st.rerun()
+                st.success("Profile picture updated."); st.rerun()
             else:
                 st.error("Upload succeeded but saving URL failed (check RLS/policies).")
         else:
             st.error("Upload failed. Try another image.")
 
-# -----------------------------
+# ---------------------------------------------------------------------
 # Footer
-# -----------------------------
+# ---------------------------------------------------------------------
 st.caption("Made with love. Drink a beer.")
